@@ -36,6 +36,7 @@ internal sealed class HoverProbeController : KeyboardMouseController, IDisposabl
     private CancellationTokenSource? _pending;
     private FilePositionHit? _asking;
     private FilePositionHit? _showing;
+    private PointF _anchor;
 
     public HoverProbeController(
         DiffContentView surface,
@@ -57,6 +58,11 @@ internal sealed class HoverProbeController : KeyboardMouseController, IDisposabl
     {
         // Whether the pointer is over the text is the hit test's answer, not a flag kept in step
         // with enter and exit events: a position that maps to no line is already "not here".
+        // Reaching for the hover means crossing the code it is covering. Those moves would each
+        // read as a move to another symbol and take the card away before anyone got to it, so
+        // while one is up its own footprint is not somewhere a new question is asked.
+        if (_showing is not null && OverTheCard(e.Mouse.Point)) return;
+
         var at = _surface.HitTestFilePosition(e.Mouse.Point);
         if (at is null)
         {
@@ -102,6 +108,7 @@ internal sealed class HoverProbeController : KeyboardMouseController, IDisposabl
                 {
                     if (token.IsCancellationRequested) return;
                     _showing = at;
+                    _anchor = anchor;
                     _popups.Show(this, hover, new RectF(anchor.X, anchor.Y, 1, 1));
                 });
             }
@@ -116,6 +123,18 @@ internal sealed class HoverProbeController : KeyboardMouseController, IDisposabl
             }
         }, token);
     }
+
+    /// <summary>
+    /// Whether a point falls on the card. The card hangs below the anchor and is at most its
+    /// maximum height, so this is the region it can occupy rather than the region it does — a
+    /// short hover leaves some of this box empty, which only means the card survives a pointer
+    /// travelling just past it.
+    /// </summary>
+    private bool OverTheCard(PointF point) =>
+        point.X >= _anchor.X - HoverPopupService.Gap &&
+        point.X <= _anchor.X + HoverPopupService.CardWidth + HoverPopupService.Gap &&
+        point.Y <= _anchor.Y + HoverPopupService.Gap &&
+        point.Y >= _anchor.Y - HoverPopupService.CardMaxHeight - HoverPopupService.Gap;
 
     private void Dismiss()
     {

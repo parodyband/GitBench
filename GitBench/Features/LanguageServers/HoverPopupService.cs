@@ -1,11 +1,18 @@
+using GitBench.Features.Operations;
 using GitBench.Features.Markdown;
 using GitBench.Features.Markdown.Parsing;
+using GitBench.Features.Markdown.Rendering;
 using GitBench.Widgets;
 using GitBench.Lsp.Documents;
 using ZGF.Geometry;
 using ZGF.Gui;
 using ZGF.Gui.Bindings;
 using ZGF.Gui.Desktop;
+using ZGF.Gui.Desktop.Components.VerticalScrollBar;
+using ZGF.Gui.Desktop.Controllers;
+using ZGF.Gui.Desktop.Input;
+using ZGF.Gui.VerticalScrollBar;
+using ZGF.Gui.Views;
 using ZGF.Gui.Widgets;
 
 namespace GitBench.Features.LanguageServers;
@@ -20,8 +27,13 @@ namespace GitBench.Features.LanguageServers;
 /// </remarks>
 internal sealed class HoverPopupService : IDisposable
 {
-    private const int Gap = 8;
-    private const int MaxWidth = 620;
+    /// <summary>The gap between the anchor and the card, and the card's own bounds. Public because
+    /// the controller has to know where the card sits to leave it alone while it is up.</summary>
+    public const int Gap = 8;
+
+    public const float CardWidth = HoverCard.WidthPx;
+
+    public const float CardMaxHeight = HoverCard.MaxHeightPx;
 
     private readonly IPopupWindowFactory _factory;
     private readonly IWindowCoordinates _coordinates;
@@ -50,13 +62,14 @@ internal sealed class HoverPopupService : IDisposable
             BuildRoot = ctx => Direction.Wrap(new HoverCard { Render = rendered }).BuildView(ctx),
             Place = (width, height) =>
             {
-                var w = Math.Min(width, MaxWidth);
-                var preferred = new RectI(anchor.X, anchor.Y + anchor.Height + Gap, w, height);
-                var flipped = new RectI(anchor.X, anchor.Y - Gap - height, w, height);
+                var preferred = new RectI(anchor.X, anchor.Y + anchor.Height + Gap, width, height);
+                var flipped = new RectI(anchor.X, anchor.Y - Gap - height, width, height);
                 return (preferred, flipped);
             },
-            // The pointer stays the pane's: a hover that swallowed the mouse would dismiss itself
-            // the moment it appeared, and the reader is still selecting text underneath it.
+            // The pointer stays the pane's. A card that takes it cannot be reached: the pane reads
+            // losing the pointer as the reader leaving, and closing the card from its own input
+            // event tears down views the input system is still walking. The controller decides
+            // instead, from where the pointer is.
             MousePassThrough = true,
         });
     }
@@ -80,28 +93,54 @@ internal sealed class HoverPopupService : IDisposable
 /// <summary>The hover's contents, on the surface the theme gives popups.</summary>
 internal sealed record HoverCard : Widget
 {
+    /// <summary>
+    /// Fixed, not measured. The markdown blocks stretch to the width they are given rather than
+    /// reporting one of their own, so a card left to size itself horizontally collapses to the
+    /// width of its copy button. Height still follows the content.
+    /// </summary>
+    internal const float WidthPx = 520f;
+
+    /// <summary>Past this the hover is reference documentation, not a label for what is under the
+    /// pointer, and the file behind it matters more than the rest of the prose.</summary>
+    internal const float MaxHeightPx = 420f;
+
+
     public required MarkdownRender Render { get; init; }
 
-    // The markdown view fills its parent, so the popup has to be the thing with a size: left to
-    // measure itself it collapses to nothing and draws its content outside its own window.
+    /// <summary>
+    /// The blocks in a pane that reports their height rather than filling what it is given, so the
+    /// card is exactly as tall as the hover until <see cref="MaxHeightPx"/> stops it and the rest
+    /// scrolls.
+    /// </summary>
+    private View Scroller(Context ctx)
+    {
+        var pane = new VerticalScrollPane { FillParent = false, StretchContent = false };
+        pane.Children.Add(new MarkdownWidget { Document = Render.Document }.BuildView(ctx));
+        pane.UseController(ctx.Require<InputSystem>(), () => new VerticalScrollPaneWheelController(pane));
+        return pane;
+    }
+
+    // The blocks, not MarkdownDocumentView: that wraps them in a scroll pane that fills its parent,
+    // and a popup has no parent to take a size from — it is sized by what it contains. Bounded so a
+    // hover carrying a page of documentation cannot become a window taller than the screen.
     protected override IWidget Build(Context ctx) => new Box
     {
-        Width = 520f,
-        Height = 200f,
-        Background = Theme.Color(s => s.Palette.Surface),
+        Width = WidthPx,
+        MaxHeight = MaxHeightPx,
+        // A hover floats over the code it describes, so it has to read as a separate surface: the
+        // tooltip tokens, an outline and a shadow. Painted in the panel's own colour it looked like
+        // part of the file.
+        Background = Theme.Color(s => s.Tooltip.Background),
+        BorderSize = BorderSizeStyle.All(1),
+        BorderColor = Theme.BorderColor(s => BorderColorStyle.All(s.Tooltip.Border)),
         Children =
         [
             new Padding
             {
                 Amount = new PaddingStyle { Left = 10, Top = 8, Right = 10, Bottom = 8 },
-                Children =
-                [
-                    new MarkdownDocumentView
-                    {
-                        Document = Prop.Bind<MarkdownDocument?>(() => Render.Document),
-                    },
-                ],
+                Children = [new Raw { View = Scroller(ctx) }],
             },
         ],
     };
 }
+
