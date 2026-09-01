@@ -1,5 +1,6 @@
 using GitBench.App;
 using GitBench.Controls;
+using GitBench.Features.LanguageServers;
 using GitBench.Features.LocalChanges;
 using GitBench.Features.Repos;
 using GitBench.Localization;
@@ -131,6 +132,8 @@ internal sealed record FileBrowserPreviewHeader : Widget
         breadcrumb.BindThemedTextColor(ctx.Theme(), s => s.Palette.TextMuted);
         breadcrumb.Bind(browser.Breadcrumb, path => breadcrumb.Text = path is null ? string.Empty : Separator + path);
 
+        var servers = new LanguageServerStatusChip { Model = browser }.BuildView(ctx);
+
         var toggle = new LocalChangesHeaderActionButton
         {
             Icon = Prop.Bind<string?>(() =>
@@ -148,6 +151,7 @@ internal sealed record FileBrowserPreviewHeader : Widget
             {
                 new FlexItem { Shrink = 1, Child = title },
                 new FlexItem { Grow = 1, Shrink = 2, Child = breadcrumb },
+                servers,
                 toggle,
             },
         });

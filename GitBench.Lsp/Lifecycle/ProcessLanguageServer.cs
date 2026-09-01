@@ -61,7 +61,7 @@ public sealed class ProcessLanguageServerLauncher(
 }
 
 /// <summary>One running server: its process, its connection, and how far along it is.</summary>
-public sealed class ProcessLanguageServer : ILanguageServerProcess, ILspServerMessages
+public sealed class ProcessLanguageServer : ILanguageServerSession, ILspServerMessages
 {
     private readonly Process _process;
     private readonly Action<Action> _post;
@@ -139,14 +139,27 @@ public sealed class ProcessLanguageServer : ILanguageServerProcess, ILspServerMe
     }
 
     /// <summary>
-    /// Asks the server something, and promotes it to ready on the first real answer. Readiness is
-    /// reported from an answer rather than from the handshake because a server can complete the
-    /// handshake in milliseconds and still be half a minute from knowing anything.
+    /// Asks the server something, and reports what the answer says about the server itself. A real
+    /// answer promotes it to ready — readiness is reported from an answer rather than from the
+    /// handshake because a server can complete the handshake in milliseconds and still be half a
+    /// minute from knowing anything. A refusal that means "ask again" is that same half minute
+    /// seen from the other side, and reports the server as still working.
     /// </summary>
     public async Task<LspResponse<T>> AskAsync<T>(LspRequest<T> request, TimeSpan timeout, CancellationToken ct)
     {
         var response = await _connection.Send(request, timeout, ct).ConfigureAwait(false);
-        if (response is LspResponse<T>.Ok) Advance(new ServerReadiness.Ready());
+        switch (response)
+        {
+            case LspResponse<T>.Ok:
+                Advance(new ServerReadiness.Ready());
+                break;
+            // Only from the handshake: a percentage the server sent itself says more than this
+            // does, and must not be replaced by a refusal that carries no number.
+            case LspResponse<T>.Retryable when _readiness is ServerReadiness.Handshaked:
+                Advance(new ServerReadiness.Indexing(null));
+                break;
+        }
+
         return response;
     }
 

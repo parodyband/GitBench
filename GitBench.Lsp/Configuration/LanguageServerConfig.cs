@@ -38,6 +38,13 @@ public sealed record LanguageServerConfig(
 {
     public const int DefaultMaxConcurrentServers = 2;
 
+    /// <summary>
+    /// Languages the file names and switches off. Not servers — nothing here can be launched — but
+    /// not absent either: a language the user turned off is one they have already decided about,
+    /// and offering to configure it again would be reading their config back to them.
+    /// </summary>
+    public IReadOnlyList<LanguageId> Disabled { get; init; } = [];
+
     public static readonly LanguageServerConfig Empty =
         new([], DefaultMaxConcurrentServers);
 
@@ -50,6 +57,10 @@ public sealed record LanguageServerConfig(
                 return server;
         return null;
     }
+
+    /// <summary>Whether the file has anything to say about a language, running or not.</summary>
+    public bool Mentions(LanguageId language) =>
+        ServerFor(language) is not null || Disabled.Contains(language);
 
     public LanguageServerEntry? ServerFor(LanguageId language)
     {

@@ -72,12 +72,6 @@ internal static class AppServices
         context.AddSingleton<ISymbolExtractor>(_ =>
             new TreeSitterSymbolExtractor(reason => CrashLog.Note(crashLogPath, reason)));
 
-        // Costs nothing until the user writes language-servers.json: with no file there is no
-        // configuration, so no server is ever launched and nothing is asked of one.
-        context.AddSingleton(ctx => new LanguageServerService(
-            ctx.Require<IUiDispatcher>(),
-            CurrentProcessEnvironment.Instance));
-
         context.AddPlatformServices();
 
         var statePath = AppPaths.AppDataPath("state.json");
@@ -186,6 +180,11 @@ internal static class AppServices
 
         context.AddSingleton<IFileSystemReader, FileSystemReader>();
         context.AddHostedService<IFileBrowserStore, FileBrowserStore>();
+
+        // Costs nothing until the user writes language-servers.json: with no file there is no
+        // configuration, so no server is ever launched, nothing is asked of one, and no timer runs.
+        // Hosted because it follows the registry, which it can only do once the UI loop exists.
+        context.AddHostedService<ILanguageServerStore, LanguageServerStore>();
 
         // Factory because the snapshot store ingests the active repo's file-list summary into the
         // status store, an interface cast (IRepoStatusIngest) the container can't do by plain

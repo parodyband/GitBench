@@ -24,15 +24,14 @@ public interface IServerEnvironment
     IReadOnlyDictionary<string, string> Variables { get; }
 }
 
-/// <summary>The environment this process is already running in. The fallback when the app has
-/// nothing better to offer, and correct everywhere except a macOS desktop launch.</summary>
-public sealed class CurrentProcessEnvironment : IServerEnvironment
+/// <summary>
+/// An environment given as a map: the variables a server starts with, and the <c>PATH</c> its
+/// command is looked up on. The one implementation with a lookup in it, so wherever the variables
+/// came from — this process, a login shell, or a test — finding the executable works the same way.
+/// </summary>
+public sealed class MapServerEnvironment(IReadOnlyDictionary<string, string> variables) : IServerEnvironment
 {
-    public static readonly CurrentProcessEnvironment Instance = new();
-
-    private CurrentProcessEnvironment() { }
-
-    public IReadOnlyDictionary<string, string> Variables { get; } = Read();
+    public IReadOnlyDictionary<string, string> Variables { get; } = variables;
 
     public string? ResolveCommand(string command)
     {
@@ -60,6 +59,21 @@ public sealed class CurrentProcessEnvironment : IServerEnvironment
         yield return Path.Combine(directory, command + ".cmd");
         yield return Path.Combine(directory, command + ".bat");
     }
+}
+
+/// <summary>The environment this process is already running in. The fallback when the app has
+/// nothing better to offer, and correct everywhere except a macOS desktop launch.</summary>
+public sealed class CurrentProcessEnvironment : IServerEnvironment
+{
+    public static readonly CurrentProcessEnvironment Instance = new();
+
+    private readonly MapServerEnvironment _environment = new(Read());
+
+    private CurrentProcessEnvironment() { }
+
+    public IReadOnlyDictionary<string, string> Variables => _environment.Variables;
+
+    public string? ResolveCommand(string command) => _environment.ResolveCommand(command);
 
     private static Dictionary<string, string> Read()
     {

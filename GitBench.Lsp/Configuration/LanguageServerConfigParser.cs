@@ -53,9 +53,12 @@ static class LanguageServerConfigParser
             if (Version(root, problems) is { } version && version > HighestSupportedVersion)
                 return new ConfigParse.Unsupported(version, HighestSupportedVersion);
 
-            var servers = ReadServers(root, problems);
+            var disabled = new List<LanguageId>();
+            var servers = ReadServers(root, problems, disabled);
             var max = ReadMaxConcurrent(root, problems);
-            return new ConfigParse.Loaded(new LanguageServerConfig(servers, max), problems);
+            return new ConfigParse.Loaded(
+                new LanguageServerConfig(servers, max) { Disabled = disabled },
+                problems);
         }
     }
 
@@ -82,7 +85,8 @@ static class LanguageServerConfigParser
         return LanguageServerConfig.DefaultMaxConcurrentServers;
     }
 
-    static List<LanguageServerEntry> ReadServers(JsonElement root, List<ConfigProblem> problems)
+    static List<LanguageServerEntry> ReadServers(
+        JsonElement root, List<ConfigProblem> problems, List<LanguageId> disabled)
     {
         var entries = new List<LanguageServerEntry>();
         if (!root.TryGetProperty("servers", out var servers))
@@ -111,7 +115,7 @@ static class LanguageServerConfigParser
                 continue;
             }
 
-            if (ReadEntry(language, property.Value, problems) is not { } entry) continue;
+            if (ReadEntry(language, property.Value, problems, disabled) is not { } entry) continue;
 
             var extensions = new List<FileExtension>();
             foreach (var extension in entry.Extensions)
@@ -141,7 +145,8 @@ static class LanguageServerConfigParser
 
     // An entry is taken whole or not at all: a field of the wrong type means we do not know what
     // the user meant, and guessing launches a process on a guess.
-    static LanguageServerEntry? ReadEntry(LanguageId language, JsonElement element, List<ConfigProblem> problems)
+    static LanguageServerEntry? ReadEntry(
+        LanguageId language, JsonElement element, List<ConfigProblem> problems, List<LanguageId> disabled)
     {
         void Skip(string reason) => problems.Add(new ConfigProblem(language.Value, reason));
 
@@ -157,6 +162,7 @@ static class LanguageServerConfigParser
                 Skip("'enabled' must be true or false.");
                 return null;
             case false:
+                disabled.Add(language);
                 return null;
         }
 

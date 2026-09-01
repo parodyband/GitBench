@@ -124,6 +124,14 @@ public sealed class LanguageServerSupervisor : IDisposable
         return StateFor(active.Id, entry.Language);
     }
 
+    /// <summary>
+    /// The process currently attached to a server, or null when nothing is running for it — it is
+    /// stopped, waiting to be restarted, or given up on. Null is the whole point: a caller cannot
+    /// hold a handle to a server the supervisor has since replaced.
+    /// </summary>
+    public ILanguageServerProcess? ProcessFor(RepositoryId repository, LanguageId language) =>
+        _servers.TryGetValue((repository, language), out var record) ? record.Link?.Process : null;
+
     public ServerState StateFor(RepositoryId repository, LanguageId language) =>
         _servers.TryGetValue((repository, language), out var record)
             ? record.State
@@ -142,6 +150,29 @@ public sealed class LanguageServerSupervisor : IDisposable
             Discard(record);
 
         return OpenFile(filePath);
+    }
+
+    /// <summary>
+    /// Stops one server on request. It is not banned: the next file of its language starts it
+    /// again, the same as if it had never run.
+    /// </summary>
+    public void StopServer(RepositoryId repository, LanguageId language)
+    {
+        if (_servers.TryGetValue((repository, language), out var record)) Discard(record);
+    }
+
+    /// <summary>
+    /// Starts a server again from where it was last wanted — the user's answer to one that has
+    /// failed, or that they stopped. Nothing comes back on its own after being given up on.
+    /// </summary>
+    public ServerState RestartServer(RepositoryId repository, LanguageId language)
+    {
+        if (!_servers.TryGetValue((repository, language), out var record))
+            return new ServerState.Stopped();
+
+        var trigger = record.TriggerFile;
+        Discard(record);
+        return _active?.Id == repository ? OpenFile(trigger) : new ServerState.Stopped();
     }
 
     /// <summary>
@@ -292,7 +323,7 @@ public sealed class LanguageServerSupervisor : IDisposable
         if (record.Attempts > _policy.MaxRestartAttempts)
         {
             SetState(record, new ServerState.Failed(
-                $"{record.Entry.Command} stopped {record.Attempts} times in a row{Code(exit)}."));
+                $"{record.Entry.Command} stopped {record.Attempts} times in a row{Code(exit)}.{Detail(exit)}"));
             return;
         }
 
@@ -302,6 +333,11 @@ public sealed class LanguageServerSupervisor : IDisposable
     }
 
     static string Code(ServerExit exit) => exit.ExitCode is { } code ? $" (exit code {code})" : string.Empty;
+
+    // Whatever ended it said about itself — a refused handshake names something the user can fix,
+    // and "stopped three times" on its own names nothing.
+    static string Detail(ServerExit exit) =>
+        exit.Detail is { Length: > 0 } detail ? $" {detail}" : string.Empty;
 
     TimeSpan RestartDelay(int attempt)
     {

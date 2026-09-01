@@ -117,7 +117,7 @@ internal sealed record FileBrowserTextBody : Widget
         // Asking a language server about whatever the pointer rests on. Only here: the diff pane and
         // the review window show a file as it was at a commit, and a server asked about that would
         // answer about the file on disk instead.
-        if (ctx.Get<LanguageServerService>() is { } servers && ctx.Get<HoverPopupService>() is { } hovers)
+        if (ctx.Get<ILanguageServerStore>() is { } servers && ctx.Get<HoverPopupService>() is { } hovers)
         {
             content.UseController(ctx.Require<InputSystem>(), () => new HoverProbeController(
                 content,
