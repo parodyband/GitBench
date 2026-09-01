@@ -43,6 +43,10 @@ public abstract record RequestId
 public readonly record struct LspMethod(string Name)
 {
     public static readonly LspMethod Initialize = new("initialize");
+    public static readonly LspMethod Initialized = new("initialized");
+    public static readonly LspMethod Shutdown = new("shutdown");
+    public static readonly LspMethod Exit = new("exit");
+    public static readonly LspMethod Progress = new("$/progress");
     public static readonly LspMethod Hover = new("textDocument/hover");
     public static readonly LspMethod Definition = new("textDocument/definition");
     public static readonly LspMethod DidOpen = new("textDocument/didOpen");
