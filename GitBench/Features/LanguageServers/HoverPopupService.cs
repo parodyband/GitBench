@@ -25,7 +25,7 @@ namespace GitBench.Features.LanguageServers;
 /// is markdown — usually a fenced type signature — so it needs the markdown view, and it is wide
 /// enough to need a width of its own rather than the label sizing a tooltip gets away with.
 /// </remarks>
-internal sealed class HoverPopupService : IDisposable
+internal sealed class HoverPopupService : IHoverPresenter, IDisposable
 {
     /// <summary>The gap between the anchor and the card, and the card's own bounds. Public because
     /// the controller has to know where the card sits to leave it alone while it is up.</summary>

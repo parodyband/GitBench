@@ -27,9 +27,9 @@ internal sealed class HoverProbeController : KeyboardMouseController, IDisposabl
 {
     private const int DwellMs = 350;
 
-    private readonly DiffContentView _surface;
-    private readonly LanguageServerService _servers;
-    private readonly HoverPopupService _popups;
+    private readonly IHoverSurface _surface;
+    private readonly IHoverSource _servers;
+    private readonly IHoverPresenter _popups;
     private readonly IUiDispatcher _dispatcher;
     private readonly Func<(string Root, string Path)?> _document;
 
@@ -37,14 +37,17 @@ internal sealed class HoverProbeController : KeyboardMouseController, IDisposabl
     private FilePositionHit? _asking;
     private FilePositionHit? _showing;
     private PointF _anchor;
+    private readonly Func<TimeSpan, CancellationToken, Task> _dwell;
 
     public HoverProbeController(
-        DiffContentView surface,
-        LanguageServerService servers,
-        HoverPopupService popups,
+        IHoverSurface surface,
+        IHoverSource servers,
+        IHoverPresenter popups,
         IUiDispatcher dispatcher,
-        Func<(string Root, string Path)?> document)
+        Func<(string Root, string Path)?> document,
+        Func<TimeSpan, CancellationToken, Task>? dwell = null)
     {
+        _dwell = dwell ?? Task.Delay;
         _surface = surface;
         _servers = servers;
         _popups = popups;
@@ -54,16 +57,20 @@ internal sealed class HoverProbeController : KeyboardMouseController, IDisposabl
 
     public override void OnMouseExit(ref MouseExitEvent e) => Dismiss();
 
-    public override void OnMouseMoved(ref MouseMoveEvent e)
+    public override void OnMouseMoved(ref MouseMoveEvent e) => PointerMovedTo(e.Mouse.Point);
+
+    /// <summary>The whole of what a move means, separated from how it arrived so it can be driven
+    /// directly. Every rule here was got wrong at least once against a running app.</summary>
+    internal void PointerMovedTo(PointF point)
     {
         // Whether the pointer is over the text is the hit test's answer, not a flag kept in step
         // with enter and exit events: a position that maps to no line is already "not here".
         // Reaching for the hover means crossing the code it is covering. Those moves would each
         // read as a move to another symbol and take the card away before anyone got to it, so
         // while one is up its own footprint is not somewhere a new question is asked.
-        if (_showing is not null && OverTheCard(e.Mouse.Point)) return;
+        if (_showing is not null && OverTheCard(point)) return;
 
-        var at = _surface.HitTestFilePosition(e.Mouse.Point);
+        var at = _surface.HitTestFilePosition(point);
         if (at is null)
         {
             Dismiss();
@@ -84,7 +91,7 @@ internal sealed class HoverProbeController : KeyboardMouseController, IDisposabl
         if (_document() is not { } document) return;
         if (!_servers.Handles(document.Path)) return;
 
-        Ask(document.Root, document.Path, at.Value, e.Mouse.Point);
+        Ask(document.Root, document.Path, at.Value, point);
     }
 
     private void Ask(string repoRoot, string path, FilePositionHit at, PointF anchor)
@@ -98,7 +105,7 @@ internal sealed class HoverProbeController : KeyboardMouseController, IDisposabl
         {
             try
             {
-                await Task.Delay(DwellMs, token).ConfigureAwait(false);
+                await _dwell(TimeSpan.FromMilliseconds(DwellMs), token).ConfigureAwait(false);
                 var hover = await _servers
                     .HoverAsync(repoRoot, path, at.Line, at.Column, token)
                     .ConfigureAwait(false);

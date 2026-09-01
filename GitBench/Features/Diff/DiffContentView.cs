@@ -26,7 +26,7 @@ namespace GitBench.Features.Diff;
 /// </summary>
 internal enum HunkAction { None, Stage, Unstage, Discard }
 
-internal sealed class DiffContentView : View, IScrollableContent, IDiffSelectionSurface
+internal sealed class DiffContentView : View, IScrollableContent, IDiffSelectionSurface, Features.LanguageServers.IHoverSurface
 {
     private const float AssumedFontSize = FontSize.Body;
     // Fallback mono advance ratio if the canvas isn't available yet to measure a glyph.

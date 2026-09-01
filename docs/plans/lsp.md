@@ -202,6 +202,13 @@ express that, so those few fields need hand-written readers. This is confirmed t
 compiles clean under the app's ahead-of-time build with no warnings, provided two specific
 reflection-based JSON calls are avoided.
 
+**A hover cannot be scrolled.** A popup that follows the pointer has to let the pointer through to
+the pane behind it, or it becomes unreachable — the pane reads losing the pointer as the reader
+leaving and takes the card away as anyone moves toward it. Passing the pointer through also passes
+the wheel through, so a hover longer than its card is clipped rather than scrolled. Fixing it means
+letting a popup take wheel events without taking pointer ownership, which the popup layer cannot
+express today; it is a framework change, not a change to this feature.
+
 **Nothing in the app supervises a long-running process.** Restarting a crashed server with backoff,
 giving up after repeated failures, shutting down an idle one — none of this has precedent here. It
 all has to be written and tested.
@@ -299,6 +306,17 @@ overlap deliberately.
 **Tests are checked by breaking the code.** Each mutation of a rule must redden at least one test; a
 mutation that reddens nothing means the rule is not really covered. This has already caught dead
 assertions in every suite written so far, including one on the highest risk in this document.
+
+**The pane's own rules** — when to ask, when to stop, what to do with an answer that arrived too
+late — are tested against fakes rather than a server, because that is where the defects were: the
+protocol and configuration layers shipped without one, and every bug found by running the app was in
+the few hundred lines of glue that had no tests. Driving them needs no window: the probe takes a
+surface, a source and a presenter, and a test moves the pointer by calling it.
+
+**Hover, and anything else driven by dwell, is drivable without hands.** `gui_move` places the
+pointer through the MCP server, and the input loop leaves a driven pointer alone until a real mouse
+actually travels. Before that existed, no hover feature could be verified except by asking someone
+to hold their cursor still.
 
 **Process cleanup** gets one test per platform that kills the client and checks nothing survives.
 
