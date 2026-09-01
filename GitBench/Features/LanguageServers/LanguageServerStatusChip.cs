@@ -27,7 +27,10 @@ namespace GitBench.Features.LanguageServers;
 /// </remarks>
 internal sealed record LanguageServerStatusChip : Widget
 {
-    private const int EdgeGap = 8;
+    private const int EdgeGap = 4;
+
+    /// <summary>Padding around the dot, so the target is comfortably clickable.</summary>
+    private const int Reach = 6;
 
     protected override IWidget Build(Context ctx)
     {
@@ -50,7 +53,13 @@ internal sealed record LanguageServerStatusChip : Widget
                 onClose => new LanguageServersDialog { OnClose = onClose }))),
             Children =
             [
-                new ServerStatusDot { State = Prop.Bind(() => state.Value) },
+                // The dot is small on purpose; what you aim at should not be. The padding is
+                // inside the button, so it is the target that grows rather than the light.
+                new Padding
+                {
+                    Amount = new PaddingStyle { Left = Reach, Right = Reach, Top = Reach, Bottom = Reach },
+                    Children = [new ServerStatusDot { State = Prop.Bind(() => state.Value) }],
+                },
             ],
         }
             // The state first, because that is the thing that changes; what the dot is, second,

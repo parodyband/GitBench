@@ -854,7 +854,7 @@
   "language_servers.problems_heading": "Проблемы в файле настроек",
   "language_servers.problem": "{subject}: {message}",
   "language_servers.stop": "Остановить",
-  "language_servers.retry": "Запустить снова",
+  "language_servers.retry": "Запустить",
   "language_servers.copy_snippet": "Скопировать запись настроек",
   "language_servers.snippet_copied": "Запись настроек скопирована",
   "language_servers.config_written": "Начальные настройки созданы",

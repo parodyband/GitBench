@@ -106,9 +106,15 @@ internal sealed record FileBrowserTextBody : Widget
         hScrollBar.IsRtl = false;
         content.Use(() => new ScrollSyncController(content, vScrollBar, hScrollBar));
 
+        // Showing a file is what starts its language server, not asking it a question. The wait is
+        // tens of seconds on a cold project, and it should be spent while the file is being read.
+        var languageServers = ctx.Get<ILanguageServerStore>();
+
         content.Bind(browser.Preview, preview =>
         {
-            if (preview is FilePreview.Text text) content.SetRenderState(ToRenderState(text));
+            if (preview is not FilePreview.Text text) return;
+            content.SetRenderState(ToRenderState(text));
+            languageServers?.FileShown(text.Path);
         });
         // After the render state, and on its own path: a fold toggle must not run the render-state
         // transition, which would reset horizontal scroll and restore a stale pixel offset.

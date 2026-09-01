@@ -36,6 +36,13 @@ internal interface ILanguageServerStore : IHoverSource
 
     /// <summary>Re-reads the config file. Servers whose launch changed restart, servers that left
     /// it stop, and servers that only had a timeout edited keep running.</summary>
+    /// <summary>
+    /// Tells the servers a file is on screen. Starting here rather than at the first question is
+    /// what makes the wait useful: a project takes tens of seconds to index, and it should be
+    /// spending them while the file is being read rather than after someone points at a symbol.
+    /// </summary>
+    void FileShown(string absolutePath);
+
     void ReloadConfig();
 
     /// <summary>Starts a given-up server again. The only way one comes back, which is what makes
@@ -236,6 +243,17 @@ internal sealed class LanguageServerStore : ILanguageServerStore, IHostedService
             Publish();
             return _supervisor.ProcessFor(new RepositoryId(repo.Id), entry.Language) as LanguageServerConnection;
         }
+    }
+
+    public void FileShown(string absolutePath)
+    {
+        if (_disposed) return;
+        if (_config.ServerFor(absolutePath) is null) return;
+        if (_registry.Active.Value is null) return;
+
+        _supervisor.OpenFile(absolutePath);
+        EnsurePump();
+        Publish();
     }
 
     private void OnActiveChanged()

@@ -121,6 +121,21 @@ public sealed class ServerHandleTests : IDisposable
         Assert.NotNull(Handle());
     }
 
+    // Stopping a server discards its record, and the record is what remembered which project it
+    // was started in. Without that memory kept somewhere, asking to start it again did nothing at
+    // all — the button was there and the server never came back.
+    [Fact]
+    public void AServerStoppedByHandStartsAgainWhenAskedTo()
+    {
+        _harness.Servers.OpenFile(_harness.File(RustFile));
+        _harness.Servers.StopServer(_harness.Repo.Id, LanguageId.Of("rust"));
+
+        _harness.Servers.RestartServer(_harness.Repo.Id, LanguageId.Of("rust"));
+
+        Assert.Equal(2, _harness.Launcher.Started.Count);
+        Assert.NotNull(Handle());
+    }
+
     [Fact]
     public void StartingAGivenUpServerAgainLaunchesIt()
     {

@@ -18,6 +18,10 @@ public sealed class LanguageServerSupervisor : IDisposable
     readonly IClock _clock;
     readonly SupervisorPolicy _policy;
     readonly Dictionary<(RepositoryId Repo, LanguageId Language), ServerRecord> _servers = [];
+
+    // The file that last wanted a server, kept past the server's own record: stopping one discards
+    // the record, and without this there is nothing left to say where to start it again.
+    readonly Dictionary<(RepositoryId Repo, LanguageId Language), string> _lastTrigger = [];
     readonly List<Stopping> _stopping = [];
 
     LanguageServerConfig _config = LanguageServerConfig.Empty;
@@ -112,6 +116,9 @@ public sealed class LanguageServerSupervisor : IDisposable
         if (ProjectRoot.Find(active.RootPath, filePath, entry.RootMarkers) is not { } root)
             return new ServerState.Stopped();
 
+        // Outlives the server it started, so stopping one leaves something to start again from.
+        _lastTrigger[(active.Id, entry.Language)] = filePath;
+
         return Start(active, entry, root, filePath).State;
     }
 
@@ -165,13 +172,23 @@ public sealed class LanguageServerSupervisor : IDisposable
     /// Starts a server again from where it was last wanted — the user's answer to one that has
     /// failed, or that they stopped. Nothing comes back on its own after being given up on.
     /// </summary>
+    /// <remarks>
+    /// The file that started it is remembered past the server itself. Stopping one discards its
+    /// record, so without that memory there is nothing left to say which project to start in, and
+    /// asking to start it again does nothing at all.
+    /// </remarks>
     public ServerState RestartServer(RepositoryId repository, LanguageId language)
     {
-        if (!_servers.TryGetValue((repository, language), out var record))
+        if (_servers.TryGetValue((repository, language), out var record))
+        {
+            var running = record.TriggerFile;
+            Discard(record);
+            return _active?.Id == repository ? OpenFile(running) : new ServerState.Stopped();
+        }
+
+        if (!_lastTrigger.TryGetValue((repository, language), out var trigger))
             return new ServerState.Stopped();
 
-        var trigger = record.TriggerFile;
-        Discard(record);
         return _active?.Id == repository ? OpenFile(trigger) : new ServerState.Stopped();
     }
 

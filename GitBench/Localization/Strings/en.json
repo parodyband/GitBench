@@ -762,7 +762,7 @@
   "language_servers.problems_heading": "Problems in the config file",
   "language_servers.problem": "{subject}: {message}",
   "language_servers.stop": "Stop",
-  "language_servers.retry": "Start again",
+  "language_servers.retry": "Start",
   "language_servers.copy_snippet": "Copy config entry",
   "language_servers.snippet_copied": "Config entry copied",
   "language_servers.config_written": "Starter config written",

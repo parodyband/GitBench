@@ -760,7 +760,7 @@
   "language_servers.problems_heading": "配置文件中的问题",
   "language_servers.problem": "{subject}：{message}",
   "language_servers.stop": "停止",
-  "language_servers.retry": "重新启动",
+  "language_servers.retry": "启动",
   "language_servers.copy_snippet": "复制配置条目",
   "language_servers.snippet_copied": "已复制配置条目",
   "language_servers.config_written": "已创建初始配置",

@@ -760,7 +760,7 @@
   "language_servers.problems_heading": "설정 파일의 문제",
   "language_servers.problem": "{subject}: {message}",
   "language_servers.stop": "중지",
-  "language_servers.retry": "다시 시작",
+  "language_servers.retry": "시작",
   "language_servers.copy_snippet": "설정 항목 복사",
   "language_servers.snippet_copied": "설정 항목을 복사했습니다",
   "language_servers.config_written": "기본 설정을 만들었습니다",

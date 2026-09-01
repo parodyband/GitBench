@@ -760,7 +760,7 @@
   "language_servers.problems_heading": "設定ファイルの問題",
   "language_servers.problem": "{subject}: {message}",
   "language_servers.stop": "停止",
-  "language_servers.retry": "再起動",
+  "language_servers.retry": "起動",
   "language_servers.copy_snippet": "設定エントリをコピー",
   "language_servers.snippet_copied": "設定エントリをコピーしました",
   "language_servers.config_written": "初期設定を作成しました",

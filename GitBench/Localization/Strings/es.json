@@ -763,7 +763,7 @@
   "language_servers.problems_heading": "Problemas en el archivo de configuración",
   "language_servers.problem": "{subject}: {message}",
   "language_servers.stop": "Detener",
-  "language_servers.retry": "Volver a iniciar",
+  "language_servers.retry": "Iniciar",
   "language_servers.copy_snippet": "Copiar entrada de configuración",
   "language_servers.snippet_copied": "Entrada de configuración copiada",
   "language_servers.config_written": "Configuración inicial creada",

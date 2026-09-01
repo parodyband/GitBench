@@ -100,6 +100,44 @@ public sealed class LanguageServerStoreTests : IDisposable
         Assert.Empty(_launcher.Started);
     }
 
+    // Opening the file is what starts the server, not asking it something. A cold project spends
+    // tens of seconds indexing, and it should spend them while the file is being read.
+    [Fact]
+    public void ShowingAClaimedFileStartsItsServer()
+    {
+        var store = Store();
+        _registry.SetActive(_first);
+
+        store.FileShown(File_(_first, "src/main.rs"));
+
+        Assert.Single(_launcher.Started);
+    }
+
+    [Fact]
+    public void ShowingAFileNoServerClaimsStartsNothing()
+    {
+        var store = Store();
+        _registry.SetActive(_first);
+
+        store.FileShown(File_(_first, "README.md"));
+
+        Assert.Empty(_launcher.Started);
+    }
+
+    // A server stopped by hand comes back when asked, without having to go and touch a file first.
+    [Fact]
+    public void AServerStoppedFromTheSettingsStartsAgainWhenAskedTo()
+    {
+        var store = Store();
+        _registry.SetActive(_first);
+        store.FileShown(File_(_first, "src/main.rs"));
+        store.StopServer(LanguageId.Of("rust"));
+
+        store.RetryServer(LanguageId.Of("rust"));
+
+        Assert.Equal(2, _launcher.Started.Count);
+    }
+
     [Fact]
     public async Task AHoverOnAClaimedFileStartsExactlyOneServer()
     {

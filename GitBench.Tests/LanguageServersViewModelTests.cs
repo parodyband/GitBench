@@ -171,6 +171,8 @@ public sealed class LanguageServersViewModelTests : IDisposable
 
         public string ConfigPath => "/somewhere/language-servers.json";
 
+        public void FileShown(string absolutePath) { }
+
         public void ReloadConfig() => Reloads++;
 
         public void RetryServer(LanguageId language) => Restarted.Add(language);

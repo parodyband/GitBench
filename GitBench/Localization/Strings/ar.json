@@ -891,7 +891,7 @@
   "language_servers.problems_heading": "مشكلات في ملف الإعدادات",
   "language_servers.problem": "{subject}: {message}",
   "language_servers.stop": "إيقاف",
-  "language_servers.retry": "إعادة التشغيل",
+  "language_servers.retry": "تشغيل",
   "language_servers.copy_snippet": "نسخ إدخال الإعدادات",
   "language_servers.snippet_copied": "تم نسخ إدخال الإعدادات",
   "language_servers.config_written": "تم إنشاء الإعدادات المبدئية",
