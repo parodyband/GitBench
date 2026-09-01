@@ -163,9 +163,13 @@ public sealed class LanguageServerSupervisor : IDisposable
     {
         if (_servers.TryGetValue((repository, language), out var record))
         {
-            var running = record.TriggerFile;
+            var known = record.Entry;
+            var knownRoot = record.Root;
+            var knownTrigger = record.TriggerFile;
             Discard(record);
-            return _active?.Id == repository ? OpenFile(running) : new ServerState.Stopped();
+
+            if (_active is not { } running || running.Id != repository) return new ServerState.Stopped();
+            return Start(running, known, knownRoot, knownTrigger).State;
         }
 
         if (_active is not { } active || active.Id != repository) return new ServerState.Stopped();

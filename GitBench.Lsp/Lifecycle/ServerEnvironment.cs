@@ -53,11 +53,17 @@ public sealed class MapServerEnvironment(IReadOnlyDictionary<string, string> var
     // On Windows the configured name is normally bare and the executable is not.
     private static IEnumerable<string> Candidates(string directory, string command)
     {
-        yield return Path.Combine(directory, command);
-        if (!OperatingSystem.IsWindows()) yield break;
+        if (!OperatingSystem.IsWindows())
+        {
+            yield return Path.Combine(directory, command);
+            yield break;
+        }
+
         yield return Path.Combine(directory, command + ".exe");
         yield return Path.Combine(directory, command + ".cmd");
         yield return Path.Combine(directory, command + ".bat");
+        yield return Path.Combine(directory, command);
+        yield break;
     }
 }
 

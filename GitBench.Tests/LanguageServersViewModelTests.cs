@@ -126,11 +126,12 @@ public sealed class LanguageServersViewModelTests : IDisposable
     }
 
     [Fact]
-    public void AFailedServerIsDescribedWithTheReasonItFailed()
+    public void AFailedServerIsDescribedWithoutTheReasonItFailed()
     {
         var description = Model().Describe(new ServerState.Failed("'rust-analyzer' was not found."));
 
-        Assert.Contains("'rust-analyzer' was not found.", description, StringComparison.Ordinal);
+        Assert.DoesNotContain("'rust-analyzer' was not found.", description, StringComparison.Ordinal);
+        Assert.False(string.IsNullOrWhiteSpace(description));
     }
 
     [Fact]
