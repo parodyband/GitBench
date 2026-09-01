@@ -1,5 +1,6 @@
 using GitBench.Controls;
 using GitBench.Features.Diff;
+using GitBench.Features.LanguageServers;
 using GitBench.Features.Markdown;
 using GitBench.Features.Markdown.Parsing;
 using GitBench.Git;
@@ -110,6 +111,21 @@ internal sealed record FileBrowserTextBody : Widget
         // After the render state, and on its own path: a fold toggle must not run the render-state
         // transition, which would reset horizontal scroll and restore a stale pixel offset.
         content.Bind(browser.Folds, content.SetFoldState);
+
+        // Asking a language server about whatever the pointer rests on. Only here: the diff pane and
+        // the review window show a file as it was at a commit, and a server asked about that would
+        // answer about the file on disk instead.
+        if (ctx.Get<LanguageServerService>() is { } servers && ctx.Get<HoverPopupService>() is { } hovers)
+        {
+            content.Use(() => new HoverProbeController(
+                content,
+                servers,
+                hovers,
+                ctx.Require<IUiDispatcher>(),
+                () => browser.Preview.Value is FilePreview.Text text
+                    ? (browser.RootPath, text.Path)
+                    : null));
+        }
 
         // Both directions of the header's conversation with the body: a line to reveal on the way
         // in, the line at the top of the viewport on the way back out. Held for the view's mounted

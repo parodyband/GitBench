@@ -30,6 +30,15 @@ public sealed record HoverText(string Markdown)
 {
     private const string SectionBreak = "\n\n---\n\n";
 
+    /// <summary>The hover a server sent, as markdown, or null when it said nothing. Plain text is
+    /// fenced rather than passed through: a type signature is full of characters markdown eats.</summary>
+    public static HoverText? Of(Hover hover) => hover switch
+    {
+        Hover.Text(var kind, var value, _) when !string.IsNullOrWhiteSpace(value) =>
+            new HoverText(kind == MarkupKind.Markdown ? value : Fence(string.Empty, value)),
+        _ => null,
+    };
+
     /// <summary>Normalises any payload shape to markdown, empty when every part is empty. Plain
     /// text is fenced rather than passed through, so a type signature full of angle brackets and
     /// underscores renders as what the server said instead of as markup.</summary>

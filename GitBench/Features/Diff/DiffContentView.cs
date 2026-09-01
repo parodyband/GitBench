@@ -807,6 +807,28 @@ internal sealed class DiffContentView : View, IScrollableContent, IDiffSelection
             null, new DiffTextPos(new RowIndex(rowIndex), CharIndexAt(line.Text.Expanded, point.X)));
     }
 
+    /// <summary>
+    /// The place in the file under a pixel: a line as the file counts them, and an offset into that
+    /// line's own characters rather than into the tabs-expanded text on screen. Null over anything
+    /// that is not a line of the after-side file — a banner, a hunk bar, a removed line.
+    /// </summary>
+    /// <remarks>
+    /// The two conversions this performs are the ones a language server's answers depend on, and
+    /// both are silent when wrong: a row is not a line number, and a screen column is not a file
+    /// column wherever the line contains a tab.
+    /// </remarks>
+    public FilePositionHit? HitTestFilePosition(PointF point)
+    {
+        if (_lineHeight <= 0 || !_list.Position.ContainsPoint(point)) return null;
+
+        var rowIndex = HitTestListRow(point);
+        if (rowIndex < 0 || _rowSet.Rows[rowIndex] is not DiffRow.Line line) return null;
+        if (_rowSet.NewLineAt(new RowIndex(rowIndex)) is not { } fileLine) return null;
+
+        var column = line.Text.ToRaw(CharIndexAt(line.Text.Expanded, point.X), TabEdge.Before);
+        return new FilePositionHit(fileLine, column);
+    }
+
     DiffTextHit? IDiffSelectionSurface.ClampToScope(PointF point, object? scope)
     {
         if (_lineHeight <= 0 || _rowSet.Rows.Count == 0) return null;
