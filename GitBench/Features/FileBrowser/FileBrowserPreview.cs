@@ -118,10 +118,13 @@ internal sealed record FileBrowserTextBody : Widget
         content.Use(() =>
         {
             var subscriptions = new SubscriptionGroup();
-            browser.LineRevealRequested += content.RequestScrollToNewLine;
-            subscriptions.Add(() => browser.LineRevealRequested -= content.RequestScrollToNewLine);
-            content.TopVisibleLineChanged += browser.SetTopVisibleLine;
-            subscriptions.Add(() => content.TopVisibleLineChanged -= browser.SetTopVisibleLine);
+            // Where the browser's plain line numbers meet the body's own FileLine axis.
+            Action<int> reveal = line => content.RequestScrollToNewLine(new FileLine(line));
+            Action<FileLine?> publishTop = line => browser.SetTopVisibleLine(line?.Value ?? 0);
+            browser.LineRevealRequested += reveal;
+            subscriptions.Add(() => browser.LineRevealRequested -= reveal);
+            content.TopVisibleLineChanged += publishTop;
+            subscriptions.Add(() => content.TopVisibleLineChanged -= publishTop);
             content.OnToggleFold += browser.ToggleFold;
             subscriptions.Add(() => content.OnToggleFold -= browser.ToggleFold);
             return subscriptions;

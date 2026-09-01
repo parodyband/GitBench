@@ -447,11 +447,11 @@ internal sealed class DiffRowPainter
         // Full-file mode shows only the new-side gutter; diff mode shows old|new.
         if (!p.SingleGutter)
         {
-            DrawMonoText(c, l.OldNumber, x, p.Bottom, p.GutterWidth,
+            DrawMonoText(c, l.OldNumber.Text, x, p.Bottom, p.GutterWidth,
                 Styles.LineNumberText, TextAlignment.End, p.Z + 2);
             x += p.GutterWidth + ColumnGap;
         }
-        DrawMonoText(c, l.NewNumber, x, p.Bottom, p.GutterWidth,
+        DrawMonoText(c, l.NewNumber.Text, x, p.Bottom, p.GutterWidth,
             Styles.LineNumberText, TextAlignment.End, p.Z + 2);
         x += p.GutterWidth + ColumnGap;
 

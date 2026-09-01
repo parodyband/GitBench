@@ -42,10 +42,10 @@ internal sealed class DiffContentView : View, IScrollableContent, IDiffSelection
 
     public event Action<float>? VerticalScrollPositionChanged;
 
-    /// <summary>The new-file line at the top of the viewport, or 0 while there is none to report.
-    /// Raised only when it changes, and only once metrics have resolved — row geometry is what
-    /// makes the question answerable, so a caller cannot ask before the first draw.</summary>
-    public event Action<int>? TopVisibleLineChanged;
+    /// <summary>The new-file line at the top of the viewport, or null while there is none to
+    /// report. Raised only when it changes, and only once metrics have resolved — row geometry is
+    /// what makes the question answerable, so a caller cannot ask before the first draw.</summary>
+    public event Action<FileLine?>? TopVisibleLineChanged;
 
     /// <summary>A declaration's fold chevron was clicked, by the id its <see cref="FoldMark"/>
     /// carries. The owner decides what that means and hands back a new <see cref="FoldState"/>.</summary>
@@ -103,8 +103,9 @@ internal sealed class DiffContentView : View, IScrollableContent, IDiffSelection
     // bar settles and the value sticks, then release control so the user can scroll freely.
     private float? _pendingScrollY;
     private int _pendingScrollFrames;
-    private int? _pendingScrollLine;
-    private int _lastTopLine = -1;
+    private FileLine? _pendingScrollLine;
+    private FileLine? _lastTopLine;
+    private bool _topLinePublished;
     private FoldState? _foldState;
     private int _hoveredFoldRow = -1;
     private float _lastNormalizedY;
@@ -185,7 +186,7 @@ internal sealed class DiffContentView : View, IScrollableContent, IDiffSelection
         // preserve the reading position across a mode toggle and hold it across the async
         // highlight re-emit that follows. _renderState still holds the previous state here.
         var (prevPath, prevWasFullFile) = DescribeState(_renderState);
-        var hadTopLine = TryGetTopVisibleNewLine(out var prevTopLine);
+        var prevTopLine = TopVisibleNewLine();
         var prevScrollY = _list.ScrollY;
         var prevScrollX = _scrollX;
         var prevRowCount = _rowSet.Rows.Count;
@@ -222,11 +223,11 @@ internal sealed class DiffContentView : View, IScrollableContent, IDiffSelection
         if (newPath != prevPath) _pendingScrollLine = null;
         // A different file republishes its top line even when the number is unchanged: it is a
         // different declaration at line 1.
-        if (newPath != prevPath) _lastTopLine = -1;
+        if (newPath != prevPath) _topLinePublished = false;
 
         _list.ItemCount = _rowSet.Rows.Count;
         _list.NotifyItemsChanged();
-        ApplyScrollForTransition(state, prevPath, prevWasFullFile, hadTopLine, prevTopLine, prevScrollY, prevScrollX);
+        ApplyScrollForTransition(state, prevPath, prevWasFullFile, prevTopLine, prevScrollY, prevScrollX);
         SetDirty();
     }
 
@@ -246,13 +247,13 @@ internal sealed class DiffContentView : View, IScrollableContent, IDiffSelection
         _foldState = folds;
         if (_renderState is not DiffRenderState.FullFile) { SetDirty(); return; }
 
-        var hadTopLine = TryGetTopVisibleNewLine(out var topLine);
+        var topLine = TopVisibleNewLine();
         _rowSet = DiffRowSet.Build(_renderState, _loc, FoldsFor(_renderState));
         _selection.Clear();
         _hoveredFoldRow = -1;
         _list.ItemCount = _rowSet.Rows.Count;
         _list.NotifyItemsChanged();
-        if (hadTopLine) ScrollToNewLine(topLine, leadIn: 0);
+        if (topLine is { } line) ScrollToNewLine(line, leadIn: 0);
         SetDirty();
     }
 
@@ -271,7 +272,7 @@ internal sealed class DiffContentView : View, IScrollableContent, IDiffSelection
     // for a fresh full-file load. Falls back to the top — the prior behavior for plain diffs.
     private void ApplyScrollForTransition(
         DiffRenderState state, string? prevPath, bool prevWasFullFile,
-        bool hadTopLine, int prevTopLine, float prevScrollY, float prevScrollX)
+        FileLine? prevTopLine, float prevScrollY, float prevScrollX)
     {
         var (newPath, newIsFullFile) = DescribeState(state);
         var sameFile = newPath != null && newPath == prevPath;
@@ -286,8 +287,8 @@ internal sealed class DiffContentView : View, IScrollableContent, IDiffSelection
             // Same file. A flipped mode is a toggle → remap the top line into the new layout;
             // an unchanged mode is a re-emit (highlight attach, working-tree reload) → keep the
             // exact offset so neither the highlight nor a toggle's follow-up snaps to the top.
-            if (newIsFullFile != prevWasFullFile && hadTopLine)
-                ScrollToNewLine(prevTopLine, ScrollLeadIn);
+            if (newIsFullFile != prevWasFullFile && prevTopLine is { } top)
+                ScrollToNewLine(top, ScrollLeadIn);
             else
                 SetScrollTarget(prevScrollY);
             return;
@@ -300,7 +301,7 @@ internal sealed class DiffContentView : View, IScrollableContent, IDiffSelection
             var first = int.MaxValue;
             foreach (var n in ff.AddedLineNumbers)
                 if (n < first) first = n;
-            ScrollToNewLine(first, ScrollLeadIn);
+            ScrollToNewLine(new FileLine(first), ScrollLeadIn);
             return;
         }
 
@@ -329,68 +330,43 @@ internal sealed class DiffContentView : View, IScrollableContent, IDiffSelection
         SetDirty();
     }
 
-    // The new-file line number of the topmost visible row, used to preserve the reading position
-    // across a Diff↔FullFile toggle. Skips banners/separators and removed rows (no new number).
-    // Returns false before metrics resolve or when no row carries a new-side number.
-    public bool TryGetTopVisibleNewLine(out int lineNumber)
+    // The new-file line of the topmost visible row, used to preserve the reading position across a
+    // Diff↔FullFile toggle. Skips banners/separators and removed rows (no new-side number). Null
+    // before metrics resolve or when no row from there down stands for a new-side line.
+    public FileLine? TopVisibleNewLine()
     {
-        lineNumber = 0;
-        var rows = _rowSet.Rows;
-        if (_lineHeight <= 0 || rows.Count == 0) return false;
-        var topIndex = Math.Clamp((int)(_list.ScrollY / _lineHeight), 0, rows.Count - 1);
-        for (var i = topIndex; i < rows.Count; i++)
-        {
-            if (rows[i] is DiffRow.Line l && l.NewNumber.Length > 0 && int.TryParse(l.NewNumber, out var n))
-            {
-                lineNumber = n;
-                return true;
-            }
-        }
-        return false;
+        var count = _rowSet.Rows.Count;
+        if (_lineHeight <= 0 || count == 0) return null;
+        var topIndex = Math.Clamp((int)(_list.ScrollY / _lineHeight), 0, count - 1);
+        for (var i = topIndex; i < count; i++)
+            if (_rowSet.NewLineAt(new RowIndex(i)) is { } line) return line;
+        return null;
     }
 
     // Scrolls to a new-file line, holding the target until it can be honoured. Row geometry needs
     // metrics, and metrics resolve on the first draw, so a jump asked for while the view is fresh —
     // the file browser's, on the frame it mounts — would otherwise be dropped.
-    public void RequestScrollToNewLine(int lineNumber)
+    public void RequestScrollToNewLine(FileLine line)
     {
-        _pendingScrollLine = lineNumber;
+        _pendingScrollLine = line;
         ApplyPendingScrollLine();
         SetDirty();
     }
 
     private void ApplyPendingScrollLine()
     {
-        if (_pendingScrollLine is not int line || _lineHeight <= 0) return;
+        if (_pendingScrollLine is not { } line || _lineHeight <= 0) return;
         _pendingScrollLine = null;
         ScrollToNewLine(line, ScrollLeadIn);
     }
 
-    // Scrolls so the row for the given new-file line sits leadIn rows below the top. No-op if the
-    // line isn't present (e.g. a removed line that never had a new-side number).
-    public void ScrollToNewLine(int lineNumber, int leadIn)
+    // Scrolls so the row for the given new-file line sits leadIn rows below the top. No-op when no
+    // row stands for it or for anything above it.
+    public void ScrollToNewLine(FileLine line, int leadIn)
     {
-        if (_lineHeight <= 0 || _rowSet.Rows.Count == 0) return;
-        var rowIndex = FindRowForNewLine(lineNumber);
-        if (rowIndex < 0) return;
-        SetScrollTarget(Math.Max(0, rowIndex - leadIn) * _lineHeight);
-    }
-
-    // First row whose new-side line number equals lineNumber; falls back to the closest preceding
-    // numbered row so a target with no exact row still lands sensibly. New numbers are monotonic
-    // in row order in both modes, so a single forward scan suffices.
-    private int FindRowForNewLine(int lineNumber)
-    {
-        var rows = _rowSet.Rows;
-        var best = -1;
-        for (var i = 0; i < rows.Count; i++)
-        {
-            if (rows[i] is not DiffRow.Line l || l.NewNumber.Length == 0) continue;
-            if (!int.TryParse(l.NewNumber, out var n)) continue;
-            if (n == lineNumber) return i;
-            if (n < lineNumber) best = i;
-        }
-        return best;
+        if (_lineHeight <= 0) return;
+        if (_rowSet.RowNearestNewLine(line) is not { } row) return;
+        SetScrollTarget(Math.Max(0, row.Value - leadIn) * _lineHeight);
     }
 
     private float ContentHeight()
@@ -515,9 +491,10 @@ internal sealed class DiffContentView : View, IScrollableContent, IDiffSelection
 
     private void NotifyTopVisibleLine()
     {
-        var line = TryGetTopVisibleNewLine(out var top) ? top : 0;
-        if (line == _lastTopLine) return;
+        var line = TopVisibleNewLine();
+        if (_topLinePublished && line == _lastTopLine) return;
         _lastTopLine = line;
+        _topLinePublished = true;
         TopVisibleLineChanged?.Invoke(line);
     }
 
@@ -551,7 +528,7 @@ internal sealed class DiffContentView : View, IScrollableContent, IDiffSelection
 
         DiffRowSelection? selection = null;
         if (rows[rowIndex] is DiffRow.Line line
-            && _selection.TryRowSpan(null, rowIndex, line.Text.End, out var span))
+            && _selection.TryRowSpan(null, new RowIndex(rowIndex), line.Text.End, out var span))
             selection = span;
 
         _painter.DrawRow(c, rows[rowIndex], new DiffRowPaint(
@@ -789,7 +766,7 @@ internal sealed class DiffContentView : View, IScrollableContent, IDiffSelection
     DiffSelectionModel IDiffSelectionSurface.Selection => _selection;
     RectF IDiffSelectionSurface.SelectionViewport => _list.Position;
     IReadOnlyList<DiffRow>? IDiffSelectionSurface.RowsOf(object? scope) => _rowSet.Rows;
-    Func<int, string?>? IDiffSelectionSurface.HiddenTextOf(object? scope) =>
+    Func<RowIndex, string?>? IDiffSelectionSurface.HiddenTextOf(object? scope) =>
         _rowSet.FoldColumn ? _rowSet.HiddenAfter : null;
     void IDiffSelectionSurface.ScrollBy(float dy) => _list.SetScrollY(_list.ScrollY + dy);
     void IDiffSelectionSurface.RequestRedraw() => SetDirty();
@@ -826,7 +803,8 @@ internal sealed class DiffContentView : View, IScrollableContent, IDiffSelection
         if (_lineHeight <= 0 || !_list.Position.ContainsPoint(point)) return null;
         var rowIndex = HitTestListRow(point);
         if (rowIndex < 0 || _rowSet.Rows[rowIndex] is not DiffRow.Line line) return null;
-        return new DiffTextHit(null, new DiffTextPos(rowIndex, CharIndexAt(line.Text.Expanded, point.X)));
+        return new DiffTextHit(
+            null, new DiffTextPos(new RowIndex(rowIndex), CharIndexAt(line.Text.Expanded, point.X)));
     }
 
     DiffTextHit? IDiffSelectionSurface.ClampToScope(PointF point, object? scope)
@@ -836,7 +814,7 @@ internal sealed class DiffContentView : View, IScrollableContent, IDiffSelection
         // A drag crossing a banner or a hunk bar keeps extending through it; those rows carry no
         // selectable text, so they contribute nothing to the copy.
         var text = _rowSet.Rows[rowIndex] is DiffRow.Line line ? line.Text.Expanded : string.Empty;
-        return new DiffTextHit(null, new DiffTextPos(rowIndex, CharIndexAt(text, point.X)));
+        return new DiffTextHit(null, new DiffTextPos(new RowIndex(rowIndex), CharIndexAt(text, point.X)));
     }
 
     private ExpandedColumn CharIndexAt(string text, float x)

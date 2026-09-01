@@ -1023,7 +1023,7 @@ internal sealed class ReviewDiffListView : View, IScrollableContent, IDiffSelect
         if (s.RowSet.Rows[local - 1] is not DiffRow.Line line) return null;
 
         return new DiffTextHit(
-            s.File.Path, new DiffTextPos(local - 1, CharIndexAt(s, line.Text.Expanded, point.X)));
+            s.File.Path, new DiffTextPos(new RowIndex(local - 1), CharIndexAt(s, line.Text.Expanded, point.X)));
     }
 
     DiffTextHit? IDiffSelectionSurface.ClampToScope(PointF point, object? scope)
@@ -1038,7 +1038,7 @@ internal sealed class ReviewDiffListView : View, IScrollableContent, IDiffSelect
         row = Math.Clamp(row, 0, s.RowSet.Rows.Count - 1);
 
         var text = s.RowSet.Rows[row] is DiffRow.Line line ? line.Text.Expanded : string.Empty;
-        return new DiffTextHit(s.File.Path, new DiffTextPos(row, CharIndexAt(s, text, point.X)));
+        return new DiffTextHit(s.File.Path, new DiffTextPos(new RowIndex(row), CharIndexAt(s, text, point.X)));
     }
 
     // A named scope pins the drag to its card however far the pointer strays; an unnamed one is
@@ -1131,7 +1131,7 @@ internal sealed class ReviewDiffListView : View, IScrollableContent, IDiffSelect
             var row = s.RowSet.Rows[local - 1];
             DiffRowSelection? selection = null;
             if (row is DiffRow.Line line
-                && _selection.TryRowSpan(s.File.Path, local - 1, line.Text.End, out var span))
+                && _selection.TryRowSpan(s.File.Path, new RowIndex(local - 1), line.Text.End, out var span))
                 selection = span;
 
             _painter.DrawRow(c, row, new DiffRowPaint(
