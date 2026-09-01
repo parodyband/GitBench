@@ -126,11 +126,12 @@ surfaces that should never touch them.
 
 Most of the supporting pieces are in the codebase.
 
-- **The protocol, config and document layers themselves** — `GitBench.Lsp`, with 350 tests in
-  `GitBench.Lsp.Tests`. Framing, request matching, timeouts and cancellation, result parsing, config
+- **The protocol, config, document and lifecycle layers themselves** — `GitBench.Lsp`, with 413 tests
+  in `GitBench.Lsp.Tests`. Framing, request matching, timeouts and cancellation, result parsing, config
   parsing, server supervision, position mapping and document bookkeeping. It references no other
   project, so its tests need neither the app nor the tree-sitter natives and run in under a second.
-  What it does not contain is anything that spawns a process or draws a pixel.
+  It now also spawns real processes (`ProcessLanguageServer`), behind a launcher interface the tests
+  substitute; it still draws no pixels.
 - **Both coordinate mappings, typed.** `Features/Diff/DiffLineText.cs` holds each line as it appears
   on screen (tabs expanded) and as it is in the file; `Features/Diff/DiffGutterNumber.cs` holds the
   line-number/row-index pair with the total mapping between them on `DiffRowSet`. Both directions
@@ -145,8 +146,8 @@ Most of the supporting pieces are in the codebase.
   gutter already has icon columns and click handling.
 - **Popup positioning.** The tooltip service builds popups from any widget with automatic placement
   and flipping. A hover popup is that, with a markdown view inside.
-- **Login-shell `PATH` lookup.** Added recently for finding `git` on macOS; it needs to be shared
-  rather than written.
+- **Login-shell `PATH` lookup.** Added for finding `git` on macOS, now shared with server resolution
+  through `ServerEnvironment`.
 - **Process teardown across platforms.** The terminal already handles process groups and signals on
   Unix and process attributes on Windows.
 - **Background work with cancellation.** The Files pane already runs file loads off the UI thread and
@@ -207,11 +208,14 @@ the pane behind it, or it becomes unreachable — the pane reads losing the poin
 leaving and takes the card away as anyone moves toward it. Passing the pointer through also passes
 the wheel through, so a hover longer than its card is clipped rather than scrolled. Fixing it means
 letting a popup take wheel events without taking pointer ownership, which the popup layer cannot
-express today; it is a framework change, not a change to this feature.
+express today; it is a framework change, not a change to this feature. The card built in phase 1 is
+already a scroll pane with a wheel controller attached, so it will scroll the moment the framework
+delivers the events. Until then the card is capped in height and long hovers are clipped.
 
-**Nothing in the app supervises a long-running process.** Restarting a crashed server with backoff,
-giving up after repeated failures, shutting down an idle one — none of this has precedent here. It
-all has to be written and tested.
+**Nothing in the app supervised a long-running process.** Restarting a crashed server with backoff,
+giving up after repeated failures, shutting down an idle one — none of this had precedent here. It is
+now `LanguageServerSupervisor`: it holds no lock, is never re-entered, and takes its clock as a
+dependency, so every timing rule is tested without waiting for one.
 
 **Large files must not be sent.** The preview truncates files over 2 MB and drops the last partial
 line. Sending that to a server would produce errors for a file that does not exist. Truncated preview
@@ -230,20 +234,33 @@ discarded.
 
 Each phase produces something visible. Nothing is built two layers deep before anything works.
 
-1. **One thing, end to end.** Message framing, handshake, open a file, one hover, shown in a popup —
-   against a single hard-coded server. The pure half of this already exists in `GitBench.Lsp`; what is
-   left is spawning one real process and drawing one popup.
-2. **Real server management.** Per-repo tracking, the active-repo-only policy, restart and shutdown,
-   progress reporting, and the settings card. The config parser and the supervision state machine
-   exist; wiring them to real processes and to the repository list does not.
-3. **Diagnostics.** The overlay, the retry handling, wave replacement, underlines and gutter marks.
+1. **One thing, end to end — done.** Framing, handshake, opening a file and one hover, drawn in a
+   popup, against a real spawned process. `ProcessLanguageServer` runs the server;
+   `HoverProbeController` turns a dwell in the Files pane into a request and `HoverPopupService` into
+   a card. The probe takes its surface, source and presenter as seams, so the pane's own rules are
+   tested without a window.
+2. **Real server management — done.** `LanguageServerStore` owns per-repo tracking and the
+   active-repo-only policy: it starts a server the first time the pane shows a file that server
+   handles, forgets servers for repositories that close, and marshals process exit and readiness onto
+   the UI thread. `LanguageServerSupervisor` owns the rest — restart with growing backoff, giving up
+   after repeated failures, immediate failure with no backoff when the binary is missing, idle
+   shutdown for repositories the user has left, the concurrency cap with left-repos-then-LRU
+   eviction, and the "started but never became usable" timeout. Readiness carries the indexing
+   percentage and only moves forward, so out-of-order progress cannot walk a ready server backwards.
+   Status is visible in two places: a chip in the Files pane, and a settings dialog that lists each
+   configured server with its state, stops and restarts one, reports config problems with their
+   reason, suggests servers for languages present in the repository, and writes or copies a starter
+   entry. 56 tests cover the app-side half.
+3. **Diagnostics.** Next. The overlay, the retry handling, wave replacement, underlines and gutter
+   marks. The protocol half is parsed and tested; nothing yet composes diagnostics per row, and that
+   owner still needs a name and a home.
 4. **Go to definition.** Detached previews, tree expansion, the back stack.
 
 Deferred: references panel, project-wide symbol search, semantic highlighting.
 
-Before phase 1: the repo has a CI job that builds and tests across four platforms, but it only runs
-when triggered by hand. It needs to run on pull requests. That is a two-line change and it is assumed
-by everything below.
+Still outstanding, and assumed by everything above: the repo has a CI job that builds and tests
+across four platforms, but it is still `workflow_dispatch` only. It needs to run on pull requests.
+The per-platform process-cleanup test under Testing has nowhere to run until it does.
 
 ## Config file
 
