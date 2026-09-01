@@ -82,8 +82,12 @@ internal sealed record HoverCard : Widget
 {
     public required MarkdownRender Render { get; init; }
 
+    // The markdown view fills its parent, so the popup has to be the thing with a size: left to
+    // measure itself it collapses to nothing and draws its content outside its own window.
     protected override IWidget Build(Context ctx) => new Box
     {
+        Width = 520f,
+        Height = 200f,
         Background = Theme.Color(s => s.Palette.Surface),
         Children =
         [

@@ -34,8 +34,8 @@ internal sealed class HoverProbeController : KeyboardMouseController, IDisposabl
     private readonly Func<(string Root, string Path)?> _document;
 
     private CancellationTokenSource? _pending;
+    private FilePositionHit? _asking;
     private FilePositionHit? _showing;
-    private bool _inside;
 
     public HoverProbeController(
         DiffContentView surface,
@@ -51,18 +51,12 @@ internal sealed class HoverProbeController : KeyboardMouseController, IDisposabl
         _document = document;
     }
 
-    public override void OnMouseEnter(ref MouseEnterEvent e) => _inside = true;
-
-    public override void OnMouseExit(ref MouseExitEvent e)
-    {
-        _inside = false;
-        Dismiss();
-    }
+    public override void OnMouseExit(ref MouseExitEvent e) => Dismiss();
 
     public override void OnMouseMoved(ref MouseMoveEvent e)
     {
-        if (!_inside) return;
-
+        // Whether the pointer is over the text is the hit test's answer, not a flag kept in step
+        // with enter and exit events: a position that maps to no line is already "not here".
         var at = _surface.HitTestFilePosition(e.Mouse.Point);
         if (at is null)
         {
@@ -70,8 +64,11 @@ internal sealed class HoverProbeController : KeyboardMouseController, IDisposabl
             return;
         }
 
-        // Still on the same word: leave the popup alone rather than dismissing and re-asking as the
-        // pointer drifts a pixel.
+        // Still in the same place: leave both the popup and the question in flight alone. The
+        // position, not the popup, is what makes a move new — a pointer resting still produces a
+        // stream of identical moves, and restarting on each of them cancels the wait every time it
+        // is about to end, so the question is asked forever and never answered.
+        if (_asking is { } asking && asking == at.Value) return;
         if (_showing is { } shown && shown == at.Value) return;
 
         Cancel();
@@ -88,6 +85,7 @@ internal sealed class HoverProbeController : KeyboardMouseController, IDisposabl
     {
         var cancel = new CancellationTokenSource();
         _pending = cancel;
+        _asking = at;
         var token = cancel.Token;
 
         _ = Task.Run(async () =>
@@ -102,7 +100,7 @@ internal sealed class HoverProbeController : KeyboardMouseController, IDisposabl
 
                 _dispatcher.Post(() =>
                 {
-                    if (token.IsCancellationRequested || !_inside) return;
+                    if (token.IsCancellationRequested) return;
                     _showing = at;
                     _popups.Show(this, hover, new RectF(anchor.X, anchor.Y, 1, 1));
                 });
@@ -111,6 +109,11 @@ internal sealed class HoverProbeController : KeyboardMouseController, IDisposabl
             {
                 // The pointer moved on. There was never an answer worth showing.
             }
+            catch (Exception)
+            {
+                // A question about a symbol is not worth a crash dialog, and the thing that failed
+                // is a subprocess the user did not ask to run. The popup simply stays away.
+            }
         }, token);
     }
 
@@ -118,6 +121,7 @@ internal sealed class HoverProbeController : KeyboardMouseController, IDisposabl
     {
         Cancel();
         _showing = null;
+        _asking = null;
         _popups.Hide(this);
     }
 
@@ -126,6 +130,7 @@ internal sealed class HoverProbeController : KeyboardMouseController, IDisposabl
         _pending?.Cancel();
         _pending?.Dispose();
         _pending = null;
+        _asking = null;
     }
 
     public void Dispose() => Dismiss();

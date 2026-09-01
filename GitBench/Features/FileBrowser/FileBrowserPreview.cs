@@ -8,6 +8,8 @@ using GitBench.Localization;
 using GitBench.Widgets;
 using ZGF.Gui;
 using ZGF.Gui.Bindings;
+using ZGF.Gui.Desktop.Controllers;
+using ZGF.Gui.Desktop.Input;
 using ZGF.Gui.Views;
 using ZGF.Gui.Widgets;
 using ZGF.Observable;
@@ -117,7 +119,7 @@ internal sealed record FileBrowserTextBody : Widget
         // answer about the file on disk instead.
         if (ctx.Get<LanguageServerService>() is { } servers && ctx.Get<HoverPopupService>() is { } hovers)
         {
-            content.Use(() => new HoverProbeController(
+            content.UseController(ctx.Require<InputSystem>(), () => new HoverProbeController(
                 content,
                 servers,
                 hovers,
