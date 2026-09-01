@@ -2,6 +2,7 @@ using GitBench.Features.Notifications;
 using GitBench.Infrastructure;
 using GitBench.Localization;
 using GitBench.Lsp.Configuration;
+using GitBench.Lsp;
 using GitBench.Lsp.Lifecycle;
 using GitBench.Messages;
 using ZGF.Gui;
@@ -68,7 +69,7 @@ internal sealed class LanguageServersViewModel : IDialogViewModel
         }
     }
 
-    public string Describe(ServerState state) => ServerStateText.Detailed(state, _loc.Strings.Value);
+    public string Describe(ServerState state) => ServerStateText.Of(state, _loc.Strings.Value);
 
     private string? ReloadWork()
     {
@@ -93,7 +94,19 @@ internal sealed class LanguageServersViewModel : IDialogViewModel
 
     public void Stop(ConfiguredServer server) => _store.StopServer(server.Entry.Language);
 
-    public void Restart(ConfiguredServer server) => _store.RetryServer(server.Entry.Language);
+    public void Restart(ConfiguredServer server)
+    {
+        _store.RetryServer(server.Entry.Language);
+
+        if (FailureFor(server.Entry.Language) is not { } reason) return;
+        _bus?.Broadcast(new ShowOperationErrorMessage(
+            _loc.Strings.Value.LanguageServersTitle, reason, null));
+    }
+
+    private string? FailureFor(LanguageId language) =>
+        Servers.Value.FirstOrDefault(s => s.Entry.Language.Equals(language))?.State is ServerState.Failed failed
+            ? failed.Reason
+            : null;
 
     public void CreateConfig()
     {
