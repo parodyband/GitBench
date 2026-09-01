@@ -19,6 +19,8 @@ internal sealed class LanguageServersViewModel : IDialogViewModel
     private const int ReloadSettleMs = 500;
 
     private readonly State<string?> _reloadResult = new(null);
+    private readonly IDisposable _watch;
+    private LanguageId? _awaiting;
 
     public LanguageServersViewModel(
         ILanguageServerStore store,
@@ -33,6 +35,7 @@ internal sealed class LanguageServersViewModel : IDialogViewModel
         _clipboard = clipboard;
 
         ReloadCommand = new AsyncCommand(dispatcher, ReloadWork, Reload);
+        _watch = store.Active.Subscribe(_ => ReportFailure());
 
         Servers = new Derived<IReadOnlyList<ConfiguredServer>>(() => store.Active.Value.Configured);
         Suggestions = new Derived<IReadOnlyList<StarterServer>>(() => store.Active.Value.Suggestions);
@@ -96,9 +99,17 @@ internal sealed class LanguageServersViewModel : IDialogViewModel
 
     public void Restart(ConfiguredServer server)
     {
+        _awaiting = server.Entry.Language;
         _store.RetryServer(server.Entry.Language);
+        ReportFailure();
+    }
 
-        if (FailureFor(server.Entry.Language) is not { } reason) return;
+    private void ReportFailure()
+    {
+        if (_awaiting is not { } language) return;
+        if (FailureFor(language) is not { } reason) return;
+
+        _awaiting = null;
         _bus?.Broadcast(new ShowOperationErrorMessage(
             _loc.Strings.Value.LanguageServersTitle, reason, null));
     }
@@ -129,7 +140,11 @@ internal sealed class LanguageServersViewModel : IDialogViewModel
         Toast(ToastIntent.Success(_loc.Strings.Value.LanguageServersSnippetCopied));
     }
 
-    public void Dispose() => CloseRequested = null;
+    public void Dispose()
+    {
+        _watch.Dispose();
+        CloseRequested = null;
+    }
 
     private void Toast(ToastIntent intent) => _bus?.Broadcast(new ShowToastMessage(intent));
 }
