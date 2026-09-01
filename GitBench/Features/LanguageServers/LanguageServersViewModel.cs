@@ -59,7 +59,19 @@ internal sealed class LanguageServersViewModel : IDialogViewModel
     /// repository is written in something a known server answers for.</summary>
     public IReadable<bool> CanCreateConfig { get; }
 
-    public string ConfigPath => _store.ConfigPath;
+    /// <summary>The config file's path as a reader should see it. Normalised because the folder
+    /// can be given by an environment variable, and one written with the other platform's separator
+    /// otherwise shows up half-and-half in the middle of the path.</summary>
+    public string ConfigPath => Normalized(_store.ConfigPath);
+
+    private static string Normalized(string path)
+    {
+        try { return Path.GetFullPath(path); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return path;
+        }
+    }
 
     public string Describe(ServerState state) => ServerStateText.Detailed(state, _loc.Strings.Value);
 
