@@ -106,7 +106,15 @@ surfaces that should never touch them.
 | Which servers run | One per language, for the **active repository only**. Not one per open repo — the memory figures forbid it. Stopped when a repo goes idle, with a cap on how many run at once. |
 | Config | A single file the user writes, stored with the app's other settings. Not stored per-repository — see Risks. |
 | Finding the server binary | Resolved against the login shell's `PATH`, so a Mac GUI launch finds tools in `~/.cargo/bin` and Homebrew. Never run through a shell. |
-| Progress | The pane always shows what the server is doing: not configured, starting, indexing (with a percentage), ready, or failed with a reason. Not optional — a 32-second silent wait is indistinguishable from a broken feature. |
+| Server state | Seven states, not five: **not configured**, **stopped** (configured, nothing running — the normal resting state, and where a server returns after an idle stop), **starting**, **indexing** (with a percentage), **ready**, **restarting** (carrying the attempt and the delay, so the pane can say "retrying in 4s"), **failed** with a reason. Shown in the pane always. A 32-second silent wait is indistinguishable from a broken feature. |
+| Ready means answered | `ready` may only be set by something that saw a real answer. A finished handshake is its own state — one server completes the handshake in 15 ms and is 30 seconds from useful. This makes the protocol layer responsible for telling "answered" apart from "replied with the ask-again code". |
+| Giving up | A server that keeps crashing stops being restarted, but that state has a way out: an explicit retry, and any edit to its config entry. Without one, installing the missing binary requires restarting the app. |
+| Idle shutdown | Applies to repositories the user has **left**, not to the active one. This layer only sees files being opened — hovers go through the per-file handle — so an active-repo timer would throw away a 32-second index while someone reads one file. |
+| Config reload | Only the fields that affect launching (`command`, `args`, `env`, `rootMarkers`, `initializationOptions`, `settings`) restart a server. Editing a timeout must not kill a warm index. |
+| Launch failure vs crash | "Command not found" fails immediately with no backoff. Only a server that started and then exited earns a retry delay. Backing off on a missing binary just delays the one message the user can act on. |
+| Eviction | When the cap is reached: servers for repositories the user has left go first, then least-recently-used. Pure LRU evicts the server about to be asked a question. |
+| Timeouts | `requestTimeoutMs` is a default, not the only knob. Requests carry their own — a server 32 seconds from its first answer and 0 ms thereafter cannot share one budget with a hover. |
+| Threading | Process exit and readiness arrive on a pool thread; the supervisor takes no lock and is never re-entered. The adapter marshals both to the UI thread. |
 | Discovery | A settings card listing languages in the current repo that have no server configured, with a button to create a starter config. Ships in v1, or nobody finds the feature. |
 | Go to definition, in repo | Expands the tree to the target file and jumps to the line. |
 | Go to definition, outside repo | Opens a **detached preview**: the file is shown, the tree selection clears, and the header shows the full path. Needed because most jumps in Rust and Go land in the standard library or a package cache, which the tree cannot show. |
@@ -118,14 +126,20 @@ surfaces that should never touch them.
 
 Most of the supporting pieces are in the codebase.
 
+- **The protocol, config and document layers themselves** — `GitBench.Lsp`, with 350 tests in
+  `GitBench.Lsp.Tests`. Framing, request matching, timeouts and cancellation, result parsing, config
+  parsing, server supervision, position mapping and document bookkeeping. It references no other
+  project, so its tests need neither the app nor the tree-sitter natives and run in under a second.
+  What it does not contain is anything that spawns a process or draws a pixel.
+- **Both coordinate mappings, typed.** `Features/Diff/DiffLineText.cs` holds each line as it appears
+  on screen (tabs expanded) and as it is in the file; `Features/Diff/DiffGutterNumber.cs` holds the
+  line-number/row-index pair with the total mapping between them on `DiffRowSet`. Both directions
+  matter: positions we send must be in file coordinates, and ranges the server sends back must be
+  painted in screen coordinates.
 - **A JSON-RPC library, already referenced.** `McpSdk.Shared` and `McpSdk.Protocol` arrive through
-  `ZGF.Gui.Desktop` and provide request/response matching, message types, and a pluggable transport.
-  LSP uses a different message framing than they do by default, but the transport interface is
-  exactly the right place to add it. The package is ours, so it can be extended.
-- **Column mapping between rendered and real text.** `Features/Diff/DiffLineText.cs` holds each line
-  both as it appears on screen (tabs expanded to spaces) and as it is in the file, with typed
-  conversions in both directions. Both are needed: positions we send must be in file coordinates,
-  and ranges the server sends back must be painted in screen coordinates.
+  `ZGF.Gui.Desktop` with message types and a pluggable transport. Only the transport interface is
+  worth reusing: their request matching brings its own id allocation and error model, and neither
+  produces the response type below, so it would be wrapped back into this shape anyway.
 - **A place to draw diagnostics.** Diff rows already carry a list of character ranges used for
   intra-line highlighting, drawn independently of syntax colors. Underlines fit that channel. The
   gutter already has icon columns and click handling.
@@ -140,12 +154,36 @@ Most of the supporting pieces are in the codebase.
 
 ## The hard parts
 
-**Line-number mapping.** A position on screen is a row in a rendered list, which contains headers,
-separators, and collapsed regions as well as code. A position in the file is a line number. These are
-different things, currently both plain integers, and mixing them up produces a jump to the wrong
-line that looks exactly like a working feature. The equivalent problem for columns is already solved
-with distinct types; lines need the same treatment, with a total conversion in both directions that
-handles rows with no line (a separator) and lines with no row (inside a collapsed fold).
+**Counting lines from zero and from one.** Both screen/file mappings are now typed, but a third
+crossing remains and it is the sharpest: the protocol counts lines from **zero**, and everything a
+person looks at — gutters, `FileLine`, an error message — counts from **one**. `LspLine.FromOneBased`
+and `ToOneBased` are the only crossing, and a test asserts the conversion is not the identity, because
+an identity here puts every jump one line off, on a real line, looking exactly like it worked.
+
+The same risk appears again at the parse layer and does not look like a position bug: a definition
+result carries both the declaration's whole range and the range of just its name. Taking the wrong one
+lands in the right file at the wrong line.
+
+**Nobody yet owns diagnostics-per-row.** Diagnostics arrive as ranges in file coordinates; the painter
+iterates rows and asks what is on the row in front of it. Something has to compose the two, and it is
+where a stale document meets fresh results. It needs a name and a home before phase 3.
+
+**A result can be retryable, and that is a type decision made now.** While indexing, a server rejects
+requests with a code meaning "ask again", not "failed". Whether that is a case of the response type or
+a flavour of error changes the type every caller switches on, so it belongs in the first phase — not
+alongside diagnostics, where it first becomes visible. The same type also has to separate *cancelled*
+from *failed*: moving the mouse quickly abandons hovers constantly, and an abandoned answer must not
+render as an error.
+
+**Coming back to a file starts from nothing.** Diagnostics belong to an open document, so re-selecting
+a file looked at ten seconds ago shows a spinner again for as long as the server takes. The app already
+solves this for commit details with stale-while-revalidate; the same applies here — show the last known
+results dimmed while fresh ones are pending.
+
+**A repository reached through a symlink disowns its own files.** Deciding whether a definition target
+is inside the repo is a path comparison, and it also has to see through symlinks and be explicit about
+case rather than trusting the platform default. The boundary is built from a resolved root —
+`RealPath.Of` already exists for this.
 
 **Diagnostics cannot be baked into the rendered rows.** Syntax colors are computed once when the file
 is flattened into rows. Diagnostics arrive repeatedly, seconds apart, while the file sits on screen.
@@ -186,10 +224,11 @@ discarded.
 Each phase produces something visible. Nothing is built two layers deep before anything works.
 
 1. **One thing, end to end.** Message framing, handshake, open a file, one hover, shown in a popup —
-   against a single hard-coded server. Includes the line-number mapping, since nothing downstream can
-   be trusted without it.
-2. **Real server management.** The config file, per-repo tracking, the active-repo-only policy,
-   restart and shutdown, progress reporting, and the settings card.
+   against a single hard-coded server. The pure half of this already exists in `GitBench.Lsp`; what is
+   left is spawning one real process and drawing one popup.
+2. **Real server management.** Per-repo tracking, the active-repo-only policy, restart and shutdown,
+   progress reporting, and the settings card. The config parser and the supervision state machine
+   exist; wiring them to real processes and to the repository list does not.
 3. **Diagnostics.** The overlay, the retry handling, wave replacement, underlines and gutter marks.
 4. **Go to definition.** Detached previews, tree expansion, the back stack.
 
@@ -227,6 +266,12 @@ and a syntax error names the line and is shown rather than swallowed. One bad en
 reason; it does not discard the rest. The file stands alone, so a parse failure cannot affect other
 settings.
 
+That last rule is why this parser cannot follow the app's other JSON stores. Source-generated
+deserialization throws on the first wrong-typed field and discards the whole file — the opposite of
+what a hand-edited file needs. This one walks the document by hand, which stays reflection-free and
+ahead-of-time safe. An entry is taken whole or not at all: a field of the wrong type disqualifies the
+entry rather than being guessed at, because guessing launches a process on a guess.
+
 `rootMarkers` finds the project root by walking up from the file, which is also what makes
 submodules and nested projects work. `settings` exists because servers ask the client for their
 configuration during startup and we need an answer to give them. Two entries claiming the same file
@@ -234,21 +279,36 @@ extension need a defined winner.
 
 ## Testing
 
-**A fake server** is built in phase 1 and behaves badly on purpose: never answers, answers too late,
-exits mid-request, sends a wrong byte count, sends a huge response, replies to a request that was
-never made, sends results for a file that was never opened, and asks for configuration before
-startup finishes.
+**A fake server** behaves badly on purpose: never answers, answers too late, exits mid-request, sends
+a wrong byte count, sends a huge response, sends results for a file that was never opened, asks for
+configuration before startup finishes, and writes plain text to the stream it is supposed to speak a
+protocol on. Two cases that look alike and must not be treated alike: a reply to a request we gave up
+on is **silent**, while a reply to an id we never issued is **reported**. Conflating them means either
+a fault on every timeout or a real server bug going unseen.
 
 **The position mapping** gets its own tests: tab-indented Go, Windows line endings, emoji, CJK text,
-mixed tabs and spaces, and collapsed regions.
+mixed tabs and spaces, and collapsed regions. One rule about the fixtures matters more than any single
+case: **a fixture whose row index happens to equal its line number cannot catch the two being
+confused**, which is the bug this feature is most at risk from. Every such fixture carries chrome rows
+or a fold so the two numbers differ.
+
+**Fakes must be able to interleave.** A fake that yields instead of parking never actually overlaps two
+operations, so a missing lock passes. Fakes record synchronously, then park, so a test can drive the
+overlap deliberately.
+
+**Tests are checked by breaking the code.** Each mutation of a rule must redden at least one test; a
+mutation that reddens nothing means the rule is not really covered. This has already caught dead
+assertions in every suite written so far, including one on the highest risk in this document.
 
 **Process cleanup** gets one test per platform that kills the client and checks nothing survives.
 
 ## Risks
 
 1. **Wrong positions.** Every other failure here is visible: a crashed server shows an error, a slow
-   one shows a spinner. A definition that jumps to the wrong line looks like it worked. This is why
-   the line mapping is typed and tested before anything uses it.
+   one shows a spinner. A definition that jumps to the wrong line looks like it worked. It has three
+   sources, in three different layers — tabs, row-versus-line, and zero-versus-one — plus a fourth at
+   the parse layer, where a definition result offers both a declaration's full range and its name's.
+   All four are typed and tested before anything uses them.
 2. **rust-analyzer's cost.** 1.7 GB and half a minute, in an app that sells on being small and fast
    to start. Mitigated by: nothing runs without a config file, only the active repo's servers run,
    idle servers stop, and there is a visible off switch.

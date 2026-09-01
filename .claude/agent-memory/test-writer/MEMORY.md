@@ -9,3 +9,5 @@
 - [PTY child snippets](project_pty_child_snippets.md) — validating sh test children under a real sized pty; /bin/sh sets TERM=dumb as a shell variable
 - [PTY edge facts](project_pty_edge_facts.md) — measured errno/MAX_CANON/EIO/winsize boundaries, and the Linux divergences no macOS test can cover
 - [PTY lifecycle seams](project_pty_lifecycle_seams.md) — nohup grandchild makes teardown testable on macOS; GatedHandle leaks under a blocked reader; fd-number leak probe; platform-gate lint
+- [Deterministic concurrency fakes](feedback_deterministic_concurrency_fakes.md) — a Task.Yield fake never interleaves; record-then-park instead, and mutation-check every suite
+- [LSP transport seam](project_lsp_transport_seam.md) — the test-first seam for the LSP client's framing/protocol layer and the contracts it pinned
