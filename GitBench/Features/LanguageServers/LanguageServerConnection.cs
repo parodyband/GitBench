@@ -7,24 +7,6 @@ using GitBench.Lsp.Lifecycle;
 
 namespace GitBench.Features.LanguageServers;
 
-/// <summary>
-/// One running server as the app talks to it: it finishes the opening exchange, remembers which
-/// files it has been told about, and asks it questions.
-/// </summary>
-/// <remarks>
-/// <para>
-/// It is a <see cref="ILanguageServerProcess"/> as far as the supervisor is concerned, so the
-/// supervisor keeps deciding what runs and this keeps deciding what is asked. A handshake that
-/// fails ends the process here, with what went wrong as the exit's detail — a server the app cannot
-/// speak to is not a server, and the supervisor's restart and give-up rules are the right ones to
-/// apply to it.
-/// </para>
-/// <para>
-/// A question the server refuses because it is still indexing is asked again rather than reported
-/// as no answer. Every server measured refuses for as long as its first load takes, so the first
-/// hover of a session is exactly the one that lands inside that window.
-/// </para>
-/// </remarks>
 internal sealed class LanguageServerConnection : ILanguageServerProcess
 {
     private readonly ILanguageServerSession _server;
@@ -59,11 +41,6 @@ internal sealed class LanguageServerConnection : ILanguageServerProcess
 
     public event Action<ServerReadiness>? ReadinessChanged;
 
-    /// <summary>
-    /// The server ending, delivered even to whoever subscribed too late to hear it. A handshake can
-    /// fail before the supervisor has finished attaching to the process it just launched, and an
-    /// ending nobody was listening for would leave that server drawn as starting forever.
-    /// </summary>
     public event Action<ServerExit>? Exited
     {
         add
@@ -83,10 +60,6 @@ internal sealed class LanguageServerConnection : ILanguageServerProcess
         }
     }
 
-    /// <summary>
-    /// What the server says about the symbol at a position, or null when it has nothing to say,
-    /// never became usable, or the reader moved on before it answered.
-    /// </summary>
     public async Task<HoverText?> HoverAsync(
         string absolutePath, FileLine line, RawColumn column, CancellationToken cancel)
     {
@@ -95,8 +68,6 @@ internal sealed class LanguageServerConnection : ILanguageServerProcess
         var uri = DocumentUri.OfFile(absolutePath);
         if (!await EnsureOpenAsync(uri, absolutePath, cancel).ConfigureAwait(false)) return null;
 
-        // The file counts lines from one and the protocol counts them from zero. This is the only
-        // place in the app that crossing happens.
         var at = new LspPosition(LspLine.FromOneBased(line.Value), new LspCharacter(column.Value));
         var response = await AskAgain
             .AskAsync(
@@ -107,6 +78,15 @@ internal sealed class LanguageServerConnection : ILanguageServerProcess
             .ConfigureAwait(false);
 
         return response is LspResponse<Hover>.Ok(var hover) ? HoverText.Of(hover) : null;
+    }
+
+    public async Task PrepareAsync(string absolutePath, CancellationToken cancel)
+    {
+        if (await Handshaked().ConfigureAwait(false) is not null) return;
+
+        var uri = DocumentUri.OfFile(absolutePath);
+        if (!await EnsureOpenAsync(uri, absolutePath, cancel).ConfigureAwait(false)) return;
+        Probe(uri);
     }
 
     public void RequestShutdown() => _server.RequestShutdown();
@@ -124,7 +104,6 @@ internal sealed class LanguageServerConnection : ILanguageServerProcess
         _closing.Dispose();
     }
 
-    /// <summary>Why the opening exchange failed, or null when it worked. Completes once.</summary>
     private Task<string?> Handshaked() => _handshake;
 
     private async Task<string?> HandshakeAsync(TimeSpan timeout)
@@ -150,12 +129,6 @@ internal sealed class LanguageServerConnection : ILanguageServerProcess
         return failure;
     }
 
-    /// <summary>
-    /// Tells the server about a file once. The text comes from disk because disk is the only
-    /// writer — nothing here edits — so the copy the server reads and the copy on screen cannot
-    /// drift apart. A file too large for the preview is never sent: the preview truncates it, and
-    /// answers about a file that was cut short describe a file that does not exist.
-    /// </summary>
     private async Task<bool> EnsureOpenAsync(DocumentUri uri, string absolutePath, CancellationToken cancel)
     {
         if (_open.Contains(uri.Value)) return true;
@@ -179,12 +152,27 @@ internal sealed class LanguageServerConnection : ILanguageServerProcess
         return true;
     }
 
+    private void Probe(DocumentUri uri)
+    {
+        _ = AskAgain.AskAsync(
+            ct => _server.AskAsync(
+                LspRequests.Hover(uri, LspPosition.At(0, 0)), _entry.RequestTimeout, ct),
+            ReadinessProbe,
+            Task.Delay,
+            _closing.Token);
+    }
+
+    private static readonly AskAgainPolicy ReadinessProbe = new()
+    {
+        MaxAttempts = 12,
+        FirstDelay = TimeSpan.FromMilliseconds(500),
+        MaxDelay = TimeSpan.FromSeconds(8),
+    };
+
     private void OnReadinessChanged(ServerReadiness readiness) => ReadinessChanged?.Invoke(readiness);
 
     private void OnExited(ServerExit exit) => End(exit);
 
-    // One end per connection: a handshake failure ends it, and the process ending afterwards is the
-    // same ending seen a second time.
     private void End(ServerExit exit)
     {
         Action<ServerExit>? listeners;

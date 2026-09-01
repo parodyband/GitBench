@@ -33,11 +33,6 @@ public sealed record AskAgainPolicy
 /// <summary>
 /// Asking a question again while the server keeps saying it is not ready to answer it.
 /// </summary>
-/// <remarks>
-/// This is the protocol layer's rule rather than the pane's: which error codes mean "ask again" is
-/// something only this layer knows, and a caller that has to remember to loop is a caller that will
-/// forget. The wait is injected, so nothing here needs a real second to pass.
-/// </remarks>
 public static class AskAgain
 {
     /// <summary>

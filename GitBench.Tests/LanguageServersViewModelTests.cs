@@ -28,7 +28,7 @@ public sealed class LanguageServersViewModelTests : IDisposable
     private LanguageServersViewModel Model()
     {
         _bus.SubscribeScoped<ShowToastMessage>(message => _toasts.Add(message.Intent));
-        return new LanguageServersViewModel(_store, _loc, _bus, _clipboard);
+        return new LanguageServersViewModel(_store, _loc, new ImmediateDispatcher(), _bus, _clipboard);
     }
 
     public void Dispose() => _loc.Dispose();
@@ -199,5 +199,10 @@ public sealed class LanguageServersViewModelTests : IDisposable
         public void SetText(string text) => Text = text;
 
         public string? GetText() => Text;
+    }
+
+    private sealed class ImmediateDispatcher : IUiDispatcher
+    {
+        public void Post(Action action) => action();
     }
 }

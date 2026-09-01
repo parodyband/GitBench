@@ -7,16 +7,6 @@ using ZGF.Gui.Widgets;
 
 namespace GitBench.Features.LanguageServers;
 
-/// <summary>
-/// A server's state as a colour: green once it can answer, amber while it is on its way there, red
-/// when it cannot.
-/// </summary>
-/// <remarks>
-/// Shared by the Files pane's header and the settings dialog's rows so the same server is never
-/// drawn two different colours in two places. Stopped is red with the failures: a configured server
-/// that is not running answers nothing, and whether that was deliberate is what the words beside it
-/// are for.
-/// </remarks>
 internal sealed record ServerStatusDot : Widget
 {
     public const float Size = 8f;

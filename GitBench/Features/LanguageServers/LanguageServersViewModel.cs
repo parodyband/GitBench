@@ -9,26 +9,20 @@ using ZGF.Observable;
 
 namespace GitBench.Features.LanguageServers;
 
-/// <summary>
-/// The settings card's side of language servers: what the config file says, what each server is
-/// doing, which languages in this repository have no server at all, and the four things a reader
-/// can do about any of it.
-/// </summary>
-/// <remarks>
-/// The config file is hand-written and the app never rewrites it. A starter file is offered only
-/// when there is none, and a language added later is offered as an entry to paste — anything else
-/// would throw away the comments and ordering the user put there.
-/// </remarks>
 internal sealed class LanguageServersViewModel : IDialogViewModel
 {
     private readonly ILanguageServerStore _store;
     private readonly IMessageBus? _bus;
     private readonly ILocalizationService _loc;
     private readonly IClipboard? _clipboard;
+    private const int ReloadSettleMs = 350;
+
+    private readonly State<string?> _reloadResult = new(null);
 
     public LanguageServersViewModel(
         ILanguageServerStore store,
         ILocalizationService loc,
+        IUiDispatcher dispatcher,
         IMessageBus? bus = null,
         IClipboard? clipboard = null)
     {
@@ -36,6 +30,8 @@ internal sealed class LanguageServersViewModel : IDialogViewModel
         _loc = loc;
         _bus = bus;
         _clipboard = clipboard;
+
+        ReloadCommand = new AsyncCommand(dispatcher, ReloadWork, Reload);
 
         Servers = new Derived<IReadOnlyList<ConfiguredServer>>(() => store.Active.Value.Configured);
         Suggestions = new Derived<IReadOnlyList<StarterServer>>(() => store.Active.Value.Suggestions);
@@ -47,6 +43,10 @@ internal sealed class LanguageServersViewModel : IDialogViewModel
 
     public event Action? CloseRequested;
 
+    public IReadable<string?> ReloadResult => _reloadResult;
+
+    public AsyncCommand ReloadCommand { get; }
+
     public IReadable<IReadOnlyList<ConfiguredServer>> Servers { get; }
 
     public IReadable<IReadOnlyList<StarterServer>> Suggestions { get; }
@@ -55,13 +55,8 @@ internal sealed class LanguageServersViewModel : IDialogViewModel
 
     public IReadable<bool> HasConfigFile { get; }
 
-    /// <summary>Whether writing a starter file would do anything: there is no file, and this
-    /// repository is written in something a known server answers for.</summary>
     public IReadable<bool> CanCreateConfig { get; }
 
-    /// <summary>The config file's path as a reader should see it. Normalised because the folder
-    /// can be given by an environment variable, and one written with the other platform's separator
-    /// otherwise shows up half-and-half in the middle of the path.</summary>
     public string ConfigPath => Normalized(_store.ConfigPath);
 
     private static string Normalized(string path)
@@ -75,7 +70,26 @@ internal sealed class LanguageServersViewModel : IDialogViewModel
 
     public string Describe(ServerState state) => ServerStateText.Detailed(state, _loc.Strings.Value);
 
-    public void Reload() => _store.ReloadConfig();
+    private string? ReloadWork()
+    {
+        Thread.Sleep(ReloadSettleMs);
+        return null;
+    }
+
+    public void Reload()
+    {
+        _store.ReloadConfig();
+
+        var s = _loc.Strings.Value;
+        var clean = Problems.Value.Count == 0;
+        _reloadResult.Value = clean
+            ? s.LanguageServersReloadedCount(Servers.Value.Count.ToString())
+            : s.LanguageServersReloadedWithProblems;
+
+        Toast(clean
+            ? ToastIntent.Success(s.LanguageServersReloaded)
+            : ToastIntent.Warning(s.LanguageServersReloadedWithProblems));
+    }
 
     public void Stop(ConfiguredServer server) => _store.StopServer(server.Entry.Language);
 
@@ -95,8 +109,6 @@ internal sealed class LanguageServersViewModel : IDialogViewModel
         }
     }
 
-    /// <summary>Puts one server's config entry on the clipboard, for a config file that already
-    /// exists and is the user's to edit.</summary>
     public void CopyEntry(StarterServer server)
     {
         if (_clipboard is null) return;

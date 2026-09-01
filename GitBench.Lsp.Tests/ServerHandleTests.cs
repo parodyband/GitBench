@@ -157,11 +157,12 @@ public sealed class ServerHandleTests : IDisposable
     }
 
     [Fact]
-    public void StartingAServerThatWasNeverRunningDoesNothing()
+    public void StartingAServerThatWasNeverRunningStartsItInTheRepository()
     {
-        Assert.IsType<ServerState.Stopped>(
-            _harness.Servers.RestartServer(_harness.Repo.Id, LanguageId.Of("rust")));
-        Assert.Empty(_harness.Launcher.Started);
+        _harness.Servers.RestartServer(_harness.Repo.Id, LanguageId.Of("rust"));
+
+        Assert.Single(_harness.Launcher.Started);
+        Assert.NotNull(Handle());
     }
 
     // A server given up on is stopped for good, and something has to be able to see that it is not

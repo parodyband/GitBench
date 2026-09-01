@@ -12,8 +12,6 @@ using ZGF.Observable;
 
 namespace GitBench.Features.LanguageServers;
 
-/// <summary>What a language server did to a file the app asked about, for the surfaces that show
-/// it.</summary>
 internal enum StarterConfigOutcome
 {
     Written,
@@ -21,68 +19,27 @@ internal enum StarterConfigOutcome
     NotWritten,
 }
 
-/// <summary>
-/// The one place language servers live: which repository's servers may run, what they are doing,
-/// and what the user's config file says.
-/// </summary>
 internal interface ILanguageServerStore : IHoverSource
 {
-    /// <summary>The active repository's servers. Swaps on repo switch, so a surface binds to this
-    /// and never asks which repository it is showing.</summary>
     IReadable<LanguageServerSnapshot> Active { get; }
 
-    /// <summary>Where the config file is, whether or not it exists.</summary>
     string ConfigPath { get; }
 
-    /// <summary>Re-reads the config file. Servers whose launch changed restart, servers that left
-    /// it stop, and servers that only had a timeout edited keep running.</summary>
-    /// <summary>
-    /// Tells the servers a file is on screen. Starting here rather than at the first question is
-    /// what makes the wait useful: a project takes tens of seconds to index, and it should be
-    /// spending them while the file is being read rather than after someone points at a symbol.
-    /// </summary>
     void FileShown(string absolutePath);
 
     void ReloadConfig();
 
-    /// <summary>Starts a given-up server again. The only way one comes back, which is what makes
-    /// giving up safe.</summary>
     void RetryServer(LanguageId language);
 
-    /// <summary>Stops one server. It starts again the next time a file of its language is read.</summary>
     void StopServer(LanguageId language);
 
-    /// <summary>Writes a config file for the languages this repository is written in. Refuses when
-    /// a config file already exists: it is hand-written, comments and all, and not ours to
-    /// rewrite.</summary>
     StarterConfigOutcome WriteStarterConfig();
 }
 
-/// <summary>
-/// Owns every language server the app runs, keyed by repository, and answers the Files pane's
-/// questions about the file it is showing.
-/// </summary>
-/// <remarks>
-/// <para>
-/// Does nothing at all until <c>language-servers.json</c> exists. No file means no configuration
-/// means no process and no timer, which is what keeps this feature free for everyone who never
-/// asks for it.
-/// </para>
-/// <para>
-/// Mirrors <see cref="IFileBrowserStore"/>'s shape: per-repo state, an <see cref="Active"/>
-/// projection that swaps on repo switch, entries dropped when a repository leaves the registry, and
-/// a <see cref="Start"/> that wires the registry once the UI loop exists. The lifecycle rules
-/// themselves — start on first file, restart with backoff, give up, idle shutdown, the concurrency
-/// cap — belong to <see cref="LanguageServerSupervisor"/>; this holds the app's side of them.
-/// </para>
-/// </remarks>
 internal sealed class LanguageServerStore : ILanguageServerStore, IHostedService, IDisposable
 {
     public const string ConfigFileName = "language-servers.json";
 
-    /// <summary>How often the supervisor is moved forward. Everything it does on a clock — a
-    /// restart coming due, an idle server, a server that ignored a shutdown — happens at this
-    /// granularity, and none of it is worth waking the app for more often.</summary>
     private static readonly TimeSpan PumpInterval = TimeSpan.FromSeconds(1);
 
     private static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(30);
@@ -208,11 +165,6 @@ internal sealed class LanguageServerStore : ILanguageServerStore, IHostedService
         _stopping.Dispose();
     }
 
-    /// <summary>
-    /// The server for a file, started if this is the first file of its language. Every supervisor
-    /// call is made on the UI thread, which is the thread it says it is only ever entered from; the
-    /// question that follows is asked off it.
-    /// </summary>
     private Task<LanguageServerConnection?> ConnectionFor(string absolutePath)
     {
         var answer = new TaskCompletionSource<LanguageServerConnection?>(
@@ -254,6 +206,13 @@ internal sealed class LanguageServerStore : ILanguageServerStore, IHostedService
         _supervisor.OpenFile(absolutePath);
         EnsurePump();
         Publish();
+
+        if (_config.ServerFor(absolutePath) is { } entry &&
+            _registry.Active.Value is { } active &&
+            _supervisor.ProcessFor(new RepositoryId(active.Id), entry.Language) is LanguageServerConnection connection)
+        {
+            _ = connection.PrepareAsync(absolutePath, CancellationToken.None);
+        }
     }
 
     private void OnActiveChanged()
@@ -280,11 +239,6 @@ internal sealed class LanguageServerStore : ILanguageServerStore, IHostedService
             _suggestions.Remove(id);
     }
 
-    /// <summary>
-    /// Which languages this repository is written in, from the names at its root. Off the UI thread
-    /// because it is a directory read, and kept per repository because switching back to one must
-    /// not read the disk again.
-    /// </summary>
     private void RefreshSuggestions(Repo repo)
     {
         if (_suggestions.ContainsKey(repo.Id))
@@ -378,8 +332,6 @@ internal sealed class LanguageServerStore : ILanguageServerStore, IHostedService
                 _configFileExists);
     }
 
-    // Started the first time anything is running, so a user with no config file never has a timer:
-    // idle shutdown and restart backoff only exist once there is a server to apply them to.
     private void EnsurePump()
     {
         if (_pumping || _disposed) return;
@@ -397,7 +349,6 @@ internal sealed class LanguageServerStore : ILanguageServerStore, IHostedService
         }
         catch (OperationCanceledException)
         {
-            // Disposed.
         }
     }
 
@@ -408,7 +359,6 @@ internal sealed class LanguageServerStore : ILanguageServerStore, IHostedService
     }
 }
 
-/// <summary>Time as it actually passes, for the supervisor that only ever reads it.</summary>
 internal sealed class SystemClock : IClock
 {
     public static readonly SystemClock Instance = new();
@@ -418,10 +368,6 @@ internal sealed class SystemClock : IClock
     public DateTimeOffset Now => DateTimeOffset.UtcNow;
 }
 
-/// <summary>
-/// Wraps every server the process launcher starts in the connection that speaks to it, so what the
-/// supervisor supervises and what the pane asks questions of are the same object.
-/// </summary>
 internal sealed class LanguageServerLauncher(ILanguageServerLauncher processes, TimeSpan handshakeTimeout)
     : ILanguageServerLauncher
 {

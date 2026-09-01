@@ -7,11 +7,6 @@ namespace GitBench.Lsp.Lifecycle;
 /// at most the configured number alive, restarts what crashes until that stops being worth doing,
 /// and stops what nothing is looking at.
 /// </summary>
-/// <remarks>
-/// Nothing here waits, sleeps, or holds a timer. Time enters through <see cref="IClock"/> and
-/// arrives through <see cref="Tick"/>, which the app pumps; that is what makes crash backoff, idle
-/// shutdown, and the kill fallback testable without a real second passing.
-/// </remarks>
 public sealed class LanguageServerSupervisor : IDisposable
 {
     readonly ILanguageServerLauncher _launcher;
@@ -19,8 +14,6 @@ public sealed class LanguageServerSupervisor : IDisposable
     readonly SupervisorPolicy _policy;
     readonly Dictionary<(RepositoryId Repo, LanguageId Language), ServerRecord> _servers = [];
 
-    // The file that last wanted a server, kept past the server's own record: stopping one discards
-    // the record, and without this there is nothing left to say where to start it again.
     readonly Dictionary<(RepositoryId Repo, LanguageId Language), string> _lastTrigger = [];
     readonly List<Stopping> _stopping = [];
 
@@ -61,8 +54,6 @@ public sealed class LanguageServerSupervisor : IDisposable
 
             if (record.State is ServerState.Failed)
             {
-                // A config edit is the user's answer to a failure. Start clean rather than
-                // keeping a verdict reached against a file that no longer exists.
                 Discard(record);
                 continue;
             }
@@ -110,13 +101,9 @@ public sealed class LanguageServerSupervisor : IDisposable
             return existing.State;
         }
 
-        // A file outside the repository — a jump into the standard library — is answered by a
-        // server that is already running, and is never a reason to start one: there is no project
-        // root out there to start it in.
         if (ProjectRoot.Find(active.RootPath, filePath, entry.RootMarkers) is not { } root)
             return new ServerState.Stopped();
 
-        // Outlives the server it started, so stopping one leaves something to start again from.
         _lastTrigger[(active.Id, entry.Language)] = filePath;
 
         return Start(active, entry, root, filePath).State;
@@ -172,11 +159,6 @@ public sealed class LanguageServerSupervisor : IDisposable
     /// Starts a server again from where it was last wanted — the user's answer to one that has
     /// failed, or that they stopped. Nothing comes back on its own after being given up on.
     /// </summary>
-    /// <remarks>
-    /// The file that started it is remembered past the server itself. Stopping one discards its
-    /// record, so without that memory there is nothing left to say which project to start in, and
-    /// asking to start it again does nothing at all.
-    /// </remarks>
     public ServerState RestartServer(RepositoryId repository, LanguageId language)
     {
         if (_servers.TryGetValue((repository, language), out var record))
@@ -186,10 +168,12 @@ public sealed class LanguageServerSupervisor : IDisposable
             return _active?.Id == repository ? OpenFile(running) : new ServerState.Stopped();
         }
 
-        if (!_lastTrigger.TryGetValue((repository, language), out var trigger))
-            return new ServerState.Stopped();
+        if (_active is not { } active || active.Id != repository) return new ServerState.Stopped();
 
-        return _active?.Id == repository ? OpenFile(trigger) : new ServerState.Stopped();
+        if (_lastTrigger.TryGetValue((repository, language), out var trigger)) return OpenFile(trigger);
+
+        if (_config.ServerFor(language) is not { } entry) return new ServerState.Stopped();
+        return Start(active, entry, active.RootPath, active.RootPath).State;
     }
 
     /// <summary>
@@ -290,8 +274,6 @@ public sealed class LanguageServerSupervisor : IDisposable
                 SetState(record, new ServerState.Starting());
                 break;
 
-            // A command that is not there will not be there in two seconds either. Backoff is for
-            // a server that crashed, not for one that was never installed.
             case LaunchResult.Failed failed:
                 SetState(record, new ServerState.Failed(failed.Reason));
                 break;
@@ -310,8 +292,6 @@ public sealed class LanguageServerSupervisor : IDisposable
             {
                 ServerReadiness.Ready => new ServerState.Ready(),
                 ServerReadiness.Indexing indexing => new ServerState.Indexing(indexing.PercentComplete),
-                // A finished handshake is progress and nothing more. rust-analyzer finishes its
-                // handshake half a minute before it can answer anything.
                 _ => record.State is ServerState.Ready or ServerState.Indexing
                     ? record.State
                     : new ServerState.Starting(),
@@ -351,8 +331,6 @@ public sealed class LanguageServerSupervisor : IDisposable
 
     static string Code(ServerExit exit) => exit.ExitCode is { } code ? $" (exit code {code})" : string.Empty;
 
-    // Whatever ended it said about itself — a refused handshake names something the user can fix,
-    // and "stopped three times" on its own names nothing.
     static string Detail(ServerExit exit) =>
         exit.Detail is { Length: > 0 } detail ? $" {detail}" : string.Empty;
 
@@ -362,8 +340,6 @@ public sealed class LanguageServerSupervisor : IDisposable
         return delay > _policy.MaxRestartDelay ? _policy.MaxRestartDelay : delay;
     }
 
-    // Frees slots until one more server fits. A server for a repository the user is not looking at
-    // goes first; after that, whichever has been untouched longest.
     void EnforceCap(ServerRecord? incoming)
     {
         var max = Math.Max(1, _config.MaxConcurrentServers);

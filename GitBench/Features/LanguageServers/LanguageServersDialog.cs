@@ -12,10 +12,6 @@ using ZGF.Observable;
 
 namespace GitBench.Features.LanguageServers;
 
-/// <summary>
-/// The language-server settings card: every configured server and what it is doing, the languages
-/// in this repository that have none, and whatever the config file could not be read as.
-/// </summary>
 internal sealed record LanguageServersDialog : Widget
 {
     public required Action OnClose { get; init; }
@@ -26,6 +22,7 @@ internal sealed record LanguageServersDialog : Widget
         var vm = new LanguageServersViewModel(
             ctx.Require<ILanguageServerStore>(),
             ctx.Require<ILocalizationService>(),
+            ctx.Require<IUiDispatcher>(),
             ctx.Get<IMessageBus>(),
             ctx.Get<IClipboard>());
 
@@ -36,7 +33,8 @@ internal sealed record LanguageServersDialog : Widget
             ViewModel = vm,
             Width = DialogFrame.WidthWide,
             CancelLabel = s.CommonClose,
-            Action = (s.LanguageServersReload, DialogButtonRole.Primary, vm.Reload),
+            Action = (s.LanguageServersReload, DialogButtonRole.Primary),
+            Command = vm.ReloadCommand,
             Body =
             [
                 new Text
@@ -92,6 +90,17 @@ internal sealed record LanguageServersDialog : Widget
                     Wrap = TextWrap.Wrap,
                     Visible = Prop.Bind(() => !vm.HasConfigFile.Value),
                     Color = Theme.Color(t => t.DialogBody.RowTextMissing),
+                },
+                new Show
+                {
+                    When = new Derived<bool>(() => vm.ReloadResult.Value is not null),
+                    Then = () => new Text
+                    {
+                        Value = Prop.Bind(() => vm.ReloadResult.Value),
+                        Wrap = TextWrap.Wrap,
+                        FontSize = FontSize.Caption,
+                        Color = Theme.Color(t => t.DialogBody.BodyText),
+                    },
                 },
                 new LanguageServerSection
                 {
@@ -170,16 +179,12 @@ internal sealed record LanguageServersDialog : Widget
     }
 }
 
-/// <summary>A titled block of the card, hidden entirely when it has nothing to say — unless it has
-/// a sentence for the empty case, which "no servers configured" does.</summary>
 internal sealed record LanguageServerSection : Widget
 {
     public required string Heading { get; init; }
     public required IReadable<bool> IsEmpty { get; init; }
     public required IWidget Child { get; init; }
 
-    /// <summary>Shown in place of the list when there is none. Without one, an empty section is not
-    /// drawn at all.</summary>
     public string? Empty { get; init; }
 
     protected override IWidget Build(Context ctx) => new Column
@@ -207,8 +212,6 @@ internal sealed record LanguageServerSection : Widget
     };
 }
 
-/// <summary>One configured server: what it runs, what it is doing, and the two things that can be
-/// done to it.</summary>
 internal sealed record LanguageServerRow : Widget
 {
     public required LanguageServersViewModel Model { get; init; }
@@ -249,8 +252,6 @@ internal sealed record LanguageServerRow : Widget
                         ],
                     },
                 },
-                // Outlined, not bare: these are the only two things a reader can do to a server
-                // from here, and as plain text they read as part of the status beside them.
                 new ButtonWidget
                 {
                     Style = ButtonStyle.Outline(static t => t.Palette.TextBody),
@@ -270,8 +271,6 @@ internal sealed record LanguageServerRow : Widget
     }
 }
 
-/// <summary>A language this repository is written in that no server answers for, and the entry that
-/// would change that.</summary>
 internal sealed record LanguageServerSuggestionRow : Widget
 {
     public required LanguageServersViewModel Model { get; init; }
