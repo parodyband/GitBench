@@ -15,7 +15,7 @@ internal sealed class LanguageServersViewModel : IDialogViewModel
     private readonly IMessageBus? _bus;
     private readonly ILocalizationService _loc;
     private readonly IClipboard? _clipboard;
-    private const int ReloadSettleMs = 350;
+    private const int ReloadSettleMs = 500;
 
     private readonly State<string?> _reloadResult = new(null);
 
