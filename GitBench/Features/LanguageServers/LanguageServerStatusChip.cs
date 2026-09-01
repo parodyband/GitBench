@@ -27,7 +27,6 @@ namespace GitBench.Features.LanguageServers;
 /// </remarks>
 internal sealed record LanguageServerStatusChip : Widget
 {
-    private const float DotSize = 8f;
     private const int EdgeGap = 8;
 
     protected override IWidget Build(Context ctx)
@@ -35,7 +34,6 @@ internal sealed record LanguageServerStatusChip : Widget
         var store = ctx.Get<ILanguageServerStore>();
         var bus = ctx.Get<IMessageBus>();
         var loc = ctx.Localization();
-        var theme = ctx.Theme();
         var browser = Model;
 
         if (store is null) return new Row { Children = [] };
@@ -52,13 +50,7 @@ internal sealed record LanguageServerStatusChip : Widget
                 onClose => new LanguageServersDialog { OnClose = onClose }))),
             Children =
             [
-                new Box
-                {
-                    Width = DotSize,
-                    Height = DotSize,
-                    BorderRadius = BorderRadiusStyle.All(DotSize / 2),
-                    Background = Prop.Bind(() => Color(state.Value, theme.Styles.Value)),
-                },
+                new ServerStatusDot { State = Prop.Bind(() => state.Value) },
             ],
         }
             // The state first, because that is the thing that changes; what the dot is, second,
@@ -79,15 +71,4 @@ internal sealed record LanguageServerStatusChip : Widget
 
     public required FileBrowserViewModel Model { get; init; }
 
-    /// <summary>
-    /// Green once it can answer, amber while it is on its way there, red when it cannot. Stopped is
-    /// red with the rest: a configured server that is not running answers nothing, and whether that
-    /// is a crash or an idle shutdown is what the tooltip is for.
-    /// </summary>
-    private static uint Color(ServerState state, ThemeStyles s) => state switch
-    {
-        ServerState.Ready => s.Status.Success,
-        ServerState.Starting or ServerState.Indexing or ServerState.Restarting => s.Status.Warning,
-        _ => s.Status.Danger,
-    };
 }

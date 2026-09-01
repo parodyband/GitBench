@@ -45,12 +45,46 @@ internal sealed record LanguageServersDialog : Widget
                     Wrap = TextWrap.Wrap,
                     Color = Theme.Color(t => t.DialogBody.BodyText),
                 },
-                new Text
+                new Box
                 {
-                    Value = s.LanguageServersConfigPath(vm.ConfigPath),
-                    Wrap = TextWrap.Wrap,
-                    FontSize = FontSize.Caption,
-                    Color = Theme.Color(t => t.DialogBody.RowTextMissing),
+                    Background = Theme.Color(t => t.Palette.SurfaceSunken),
+                    BorderSize = BorderSizeStyle.All(1),
+                    BorderRadius = BorderRadiusStyle.All(Radius.Md),
+                    BorderColor = Theme.BorderColor(t => BorderColorStyle.All(t.Palette.BorderSubtle)),
+                    Children =
+                    [
+                        new Padding
+                        {
+                            Amount = new PaddingStyle { Left = Spacing.Sm, Right = Spacing.Xs, Top = Spacing.Xs, Bottom = Spacing.Xs },
+                            Children =
+                            [
+                                new Row
+                                {
+                                    Gap = Spacing.Xs,
+                                    CrossAxis = CrossAxisAlignment.Center,
+                                    Children =
+                                    [
+                                        new Grow
+                                        {
+                                            Child = new Text
+                                            {
+                                                Value = vm.ConfigPath,
+                                                Wrap = TextWrap.Wrap,
+                                                FontSize = FontSize.Caption,
+                                                FontFamily = MonoFonts.Regular,
+                                                Color = Theme.Color(t => t.DialogBody.BodyText),
+                                            },
+                                        },
+                                        new CopyIconButton
+                                        {
+                                            Label = static x => x.FileBrowserCopyPath,
+                                            GetText = () => vm.ConfigPath,
+                                        },
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
                 },
                 new Text
                 {
@@ -192,6 +226,7 @@ internal sealed record LanguageServerRow : Widget
             CrossAxis = CrossAxisAlignment.Center,
             Children =
             [
+                new ServerStatusDot { State = server.State },
                 new Grow
                 {
                     Child = new Column
@@ -214,16 +249,18 @@ internal sealed record LanguageServerRow : Widget
                         ],
                     },
                 },
+                // Outlined, not bare: these are the only two things a reader can do to a server
+                // from here, and as plain text they read as part of the status beside them.
                 new ButtonWidget
                 {
-                    Style = ButtonStyle.Plain,
+                    Style = ButtonStyle.Outline(static t => t.Palette.TextBody),
                     Visible = server.IsRunning,
                     Command = new Command(() => vm.Stop(server)),
                     Children = [new ButtonLabel { Value = s.LanguageServersStop }],
                 }.WithController<KbmController>(),
                 new ButtonWidget
                 {
-                    Style = ButtonStyle.Plain,
+                    Style = ButtonStyle.Outline(static t => t.Palette.TextBody),
                     Visible = !server.IsRunning,
                     Command = new Command(() => vm.Restart(server)),
                     Children = [new ButtonLabel { Value = s.LanguageServersRetry }],
