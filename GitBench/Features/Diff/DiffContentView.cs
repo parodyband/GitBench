@@ -390,7 +390,8 @@ internal sealed class DiffContentView : View, IScrollableContent, IDiffSelection
         // Worst case across row kinds: line rows go gutter|gutter|glyph|text (one gutter in
         // full-file mode); banner rows are flush-left with horizontal padding. Take the max.
         var gutters = _rowSet.SingleGutter ? _gutterWidth : _gutterWidth + _gutterWidth;
-        var lineWidth = gutters + DiffRowPainter.FoldColumnWidthOf(_rowSet.FoldColumn)
+        var lineWidth = DiffRowPainter.MarkerLaneWidth
+            + gutters + DiffRowPainter.FoldColumnWidthOf(_rowSet.FoldColumn)
             + DiffRowPainter.GlyphColumnWidth
             + _rowSet.MaxRowCells * _monoAdvance + DiffRowPainter.BannerPaddingX;
         var bannerWidth = DiffRowPainter.BannerPaddingX * 2 + _rowSet.MaxRowCells * _monoAdvance;

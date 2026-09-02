@@ -559,7 +559,8 @@ internal sealed class ReviewDiffListView : View, IScrollableContent, IDiffSelect
         var gutters = s.RowSet.SingleGutter ? s.GutterWidth : s.GutterWidth * 2;
         // The review window exposes no way to fold, but the column is the row set's fact and not
         // this list's, so the two width calculations stay the same calculation.
-        var width = gutters + DiffRowPainter.FoldColumnWidthOf(s.RowSet.FoldColumn)
+        var width = DiffRowPainter.MarkerLaneWidth
+            + gutters + DiffRowPainter.FoldColumnWidthOf(s.RowSet.FoldColumn)
             + DiffRowPainter.GlyphColumnWidth
             + s.RowSet.MaxRowCells * advance + DiffRowPainter.BannerPaddingX;
         if (width > _naturalWidth) _naturalWidth = width;

@@ -138,9 +138,20 @@ internal sealed class DiffRowPainter
         float left, float gutterWidth, bool singleGutter, bool foldColumn = false)
     {
         var gutters = singleGutter ? 1 : 2;
-        return left + gutters * (gutterWidth + ColumnGap) + FoldColumnWidthOf(foldColumn)
-            + GlyphColumnWidth + ColumnGap;
+        return left + MarkerLaneWidth + gutters * (gutterWidth + ColumnGap)
+            + FoldColumnWidthOf(foldColumn) + GlyphColumnWidth + ColumnGap;
     }
+
+    /// <summary>
+    /// The strip down the very left of a line row where a diagnostic marks itself. Reserved on
+    /// every diff surface whether or not anything ever marks it, so the code does not step sideways
+    /// the moment a server has something to say about the file already on screen.
+    /// </summary>
+    public const float MarkerWidth = 3f;
+
+    private const float MarkerGap = 3f;
+
+    public const float MarkerLaneWidth = MarkerWidth + MarkerGap;
 
     /// <summary>The chevron column's width, reserved for the whole surface or not at all.</summary>
     public static float FoldColumnWidthOf(bool foldColumn) => foldColumn ? FoldColumnWidth : 0f;
@@ -151,7 +162,7 @@ internal sealed class DiffRowPainter
     public static bool FoldHit(float xFromRowLeft, float gutterWidth, bool singleGutter)
     {
         var gutters = singleGutter ? 1 : 2;
-        var start = gutters * (gutterWidth + ColumnGap);
+        var start = MarkerLaneWidth + gutters * (gutterWidth + ColumnGap);
         return xFromRowLeft >= start && xFromRowLeft < start + FoldColumnWidth;
     }
 
@@ -369,7 +380,10 @@ internal sealed class DiffRowPainter
         DrawLineText(c, l, textLeft, p.Bottom, p.Left + p.Width, p.Z + 2);
 
         if (p.Diagnostics is { Count: > 0 } marks)
+        {
             DrawDiagnosticUnderlines(c, l, marks, textLeft, p.Bottom, p.Viewport, p.Z + 3);
+            DrawDiagnosticStripe(c, WorstOf(marks), p);
+        }
 
         // After the text and outside it: the chip is chrome standing in for the body, not part of
         // the row's characters, so nothing selects it and nothing measures a caret against it.
@@ -448,7 +462,7 @@ internal sealed class DiffRowPainter
             _ => (" ", Styles.LineContextGlyph),
         };
 
-        var x = p.Left;
+        var x = p.Left + MarkerLaneWidth;
         // Full-file mode shows only the new-side gutter; diff mode shows old|new.
         if (!p.SingleGutter)
         {
@@ -479,34 +493,21 @@ internal sealed class DiffRowPainter
             });
         }
 
-        if (p.Diagnostics is { Count: > 0 } marks && l.Kind == DiffLineKind.Context)
-            DrawDiagnosticDot(c, WorstOf(marks), x, p.Bottom, p.Z + 2);
-        else
-            DrawMonoText(c, glyph, x, p.Bottom, GlyphColumnWidth, glyphColor, TextAlignment.Center, p.Z + 2);
-
+        DrawMonoText(c, glyph, x, p.Bottom, GlyphColumnWidth, glyphColor, TextAlignment.Center, p.Z + 2);
         return LineTextOriginX(p.Left, p.GutterWidth, p.SingleGutter, p.FoldColumn);
     }
 
-    private const float DiagnosticDotSize = 6f;
     private const float DiagnosticWaveHalfPeriod = 3f;
     private const float DiagnosticWaveAmplitude = 1.5f;
     private const float DiagnosticWaveThickness = 1.25f;
     private const float DiagnosticBaselineInset = 2f;
 
-    private void DrawDiagnosticDot(ICanvas c, DiagnosticSeverity severity, float x, float bottom, int z) =>
+    private void DrawDiagnosticStripe(ICanvas c, DiagnosticSeverity severity, in DiffRowPaint p) =>
         c.DrawRect(new DrawRectInputs
         {
-            Position = new RectF(
-                x + (GlyphColumnWidth - DiagnosticDotSize) / 2f,
-                bottom + (LineHeight - DiagnosticDotSize) / 2f,
-                DiagnosticDotSize,
-                DiagnosticDotSize),
-            Style = new RectStyle
-            {
-                BackgroundColor = DiagnosticColor(severity),
-                BorderRadius = BorderRadiusStyle.All(DiagnosticDotSize / 2f),
-            },
-            ZIndex = z,
+            Position = new RectF(p.Left, p.Bottom, MarkerWidth, LineHeight),
+            Style = SolidBgStyle(DiagnosticColor(severity)),
+            ZIndex = p.Z + 2,
         });
 
     private void DrawDiagnosticUnderlines(
