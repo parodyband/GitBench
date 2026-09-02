@@ -114,6 +114,87 @@ public sealed class LanguageServerStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task DiagnosticsForTheFileOnScreenReachThePane()
+    {
+        var store = Store();
+        _registry.SetActive(_first);
+        var file = File_(_first, "src/main.rs");
+        store.FileShown(file);
+        await Hover(store, file);
+
+        _launcher.Started.Single().Publish(Wave(file, "cannot find value `x`"));
+
+        Assert.True(store.Diagnostics.Value.IsFor(file));
+        Assert.Equal("cannot find value `x`", Assert.Single(store.Diagnostics.Value.Items).Message);
+    }
+
+    // A file with no server is not a file with no problems: nothing checked it.
+    [Fact]
+    public void AFileNoServerClaimsReportsNothingRatherThanACleanResult()
+    {
+        var store = Store();
+        _registry.SetActive(_first);
+
+        store.FileShown(File_(_first, "README.md"));
+
+        Assert.False(store.Diagnostics.Value.Answered);
+        Assert.Empty(store.Diagnostics.Value.Items);
+    }
+
+    // Diagnostics belong to the file they were about. Moving to another one must not leave the
+    // previous file's errors underlining this one's lines.
+    [Fact]
+    public async Task MovingToAnotherFileDropsTheDiagnosticsOfTheOneBefore()
+    {
+        var store = Store();
+        _registry.SetActive(_first);
+        var file = File_(_first, "src/main.rs");
+        var other = Path.Combine(Path.GetDirectoryName(file)!, "lib.rs");
+        File.WriteAllText(other, "pub fn lib() {}");
+        store.FileShown(file);
+        await Hover(store, file);
+        _launcher.Started.Single().Publish(Wave(file, "boom"));
+
+        store.FileShown(other);
+        await Hover(store, other);
+
+        Assert.False(store.Diagnostics.Value.IsFor(file));
+        Assert.Empty(store.Diagnostics.Value.Items);
+    }
+
+    // The gap the pane actually lives in: a file goes on screen before the server has been told
+    // about it, so for a moment the open document is still the file before. Its errors must not be
+    // reported under the new file's name.
+    [Fact]
+    public async Task AFileJustPutOnScreenDoesNotInheritTheLastFilesErrors()
+    {
+        var store = Store();
+        _registry.SetActive(_first);
+        var file = File_(_first, "src/main.rs");
+        var other = Path.Combine(Path.GetDirectoryName(file)!, "lib.rs");
+        File.WriteAllText(other, "pub fn lib() {}");
+        store.FileShown(file);
+        await Hover(store, file);
+        _launcher.Started.Single().Publish(Wave(file, "boom"));
+
+        store.FileShown(other);
+
+        Assert.Empty(store.Diagnostics.Value.Items);
+        Assert.False(store.Diagnostics.Value.Answered);
+    }
+
+    private static PublishedDiagnostics Wave(string path, params string[] messages) =>
+        new(
+            DocumentUri.OfFile(path),
+            ResultVersion.Untagged,
+            messages.Select(message => new Diagnostic(
+                new LspRange(
+                    new LspPosition(new LspLine(0), new LspCharacter(0)),
+                    new LspPosition(new LspLine(0), new LspCharacter(2))),
+                DiagnosticSeverity.Error,
+                message)).ToArray());
+
+    [Fact]
     public void ShowingAFileNoServerClaimsStartsNothing()
     {
         var store = Store();
@@ -329,6 +410,8 @@ public sealed class LanguageServerStoreTests : IDisposable
         public event Action<ServerReadiness>? ReadinessChanged;
         public event Action<ServerExit>? Exited;
 
+        public event Action<PublishedDiagnostics>? DiagnosticsPublished;
+
         public int ShutdownRequests { get; private set; }
 
         public Task<string?> HandshakeAsync(TimeSpan timeout, CancellationToken cancel)
@@ -350,6 +433,10 @@ public sealed class LanguageServerStoreTests : IDisposable
             ShutdownRequests++;
             Exited?.Invoke(new ServerExit(0));
         }
+
+        public Task CloseAsync(DocumentUri uri, CancellationToken cancel) => Task.CompletedTask;
+
+        public void Publish(PublishedDiagnostics published) => DiagnosticsPublished?.Invoke(published);
 
         public void Kill() => Exited?.Invoke(new ServerExit());
 

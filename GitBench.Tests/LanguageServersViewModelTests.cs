@@ -170,6 +170,10 @@ public sealed class LanguageServersViewModelTests : IDisposable
 
         public IReadable<LanguageServerSnapshot> Active => Snapshot;
 
+        public State<FileDiagnostics> Reported { get; } = new(FileDiagnostics.None);
+
+        public IReadable<FileDiagnostics> Diagnostics => Reported;
+
         public string ConfigPath => "/somewhere/language-servers.json";
 
         public void FileShown(string absolutePath) { }

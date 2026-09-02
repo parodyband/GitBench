@@ -52,6 +52,9 @@ public sealed record DiffContentStyles(
     uint SelectionBackground,
     uint GutterRule,
     uint FoldChipBackground,
+    uint DiagnosticError,
+    uint DiagnosticWarning,
+    uint DiagnosticInfo,
     DiffSyntaxStyles Syntax);
 
 // Resolved per-theme foreground colors for each non-default TokenColorSlot. TokenColorSlot is
@@ -155,6 +158,9 @@ public partial record ThemeStyles
             // folded body. Both are margin furniture: present, never competing with the text.
             GutterRule: p.BorderSubtle,
             FoldChipBackground: p.SurfaceHoverStrong,
+            DiagnosticError: status.Danger,
+            DiagnosticWarning: status.Warning,
+            DiagnosticInfo: status.Info,
             Syntax: new DiffSyntaxStyles(
                 Keyword: syntax.Keyword,
                 String: syntax.String,

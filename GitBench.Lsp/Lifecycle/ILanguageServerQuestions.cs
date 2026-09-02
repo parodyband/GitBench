@@ -1,4 +1,5 @@
 using GitBench.Lsp.Configuration;
+using GitBench.Lsp.Documents;
 
 namespace GitBench.Lsp.Lifecycle;
 
@@ -23,6 +24,13 @@ public interface ILanguageServerQuestions
         DocumentUri uri, LanguageId language, DocumentVersion version, string text, CancellationToken cancel);
 
     Task<LspResponse<T>> AskAsync<T>(LspRequest<T> request, TimeSpan timeout, CancellationToken cancel);
+
+    /// <summary>Tells the server the file is no longer on screen, so it stops publishing about
+    /// it.</summary>
+    Task CloseAsync(DocumentUri uri, CancellationToken cancel);
+
+    /// <summary>Diagnostics the server pushed, in waves, for as long as a document is open.</summary>
+    event Action<PublishedDiagnostics>? DiagnosticsPublished;
 }
 
 /// <summary>

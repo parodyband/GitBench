@@ -60,6 +60,7 @@ internal sealed class DiffContentView : View, IScrollableContent, IDiffSelection
 
     private DiffRenderState _renderState = new DiffRenderState.Placeholder("Select a file to view diff.");
     private DiffRowSet _rowSet = DiffRowSet.Empty;
+    private DiffDiagnosticOverlay _diagnostics = DiffDiagnosticOverlay.Empty;
     private readonly DiffRowPainter _painter;
     private float _gutterWidth;
     private float _lineHeight;
@@ -538,7 +539,8 @@ internal sealed class DiffContentView : View, IScrollableContent, IDiffSelection
             Z: z,
             Selection: selection,
             FoldColumn: _rowSet.FoldColumn,
-            FoldHovered: rowIndex == _hoveredFoldRow));
+            FoldHovered: rowIndex == _hoveredFoldRow,
+            Diagnostics: MarksOnRow(rowIndex)));
 
         if (isHoveredHunk)
             DrawHunkOutlineForRow(c, rowRect, rowIndex, hunkIndex, z + 5);
@@ -549,6 +551,31 @@ internal sealed class DiffContentView : View, IScrollableContent, IDiffSelection
                 hunkIndex == _hoveredHunkIndex ? _hoveredButton : HunkAction.None,
                 _buttonStyles,
                 z + 6);
+    }
+
+    /// <summary>
+    /// Replaces what the servers say about the file on screen. Deliberately not through
+    /// <see cref="SetRenderState"/>: waves arrive for minutes while the same rows stay up, and
+    /// re-flattening on each one would throw away scroll position and fold state to draw a
+    /// squiggle.
+    /// </summary>
+    public void SetDiagnostics(DiffDiagnosticOverlay diagnostics)
+    {
+        if (ReferenceEquals(_diagnostics, diagnostics)) return;
+        _diagnostics = diagnostics;
+        SetDirty();
+    }
+
+    public IReadOnlyList<Lsp.Diagnostic> DiagnosticsOn(FileLine line) => _diagnostics.On(line);
+
+    private IReadOnlyList<DiagnosticMark>? MarksOnRow(int rowIndex)
+    {
+        if (_diagnostics.IsEmpty) return null;
+        if (_rowSet.Rows[rowIndex] is not DiffRow.Line line) return null;
+        if (_rowSet.NewLineAt(new RowIndex(rowIndex)) is not { } fileLine) return null;
+
+        var marks = _diagnostics.MarksOn(fileLine, line.Text);
+        return marks.Count == 0 ? null : marks;
     }
 
     private int ButtonRowFor(int hunkIndex)

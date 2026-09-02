@@ -32,6 +32,7 @@ public sealed class LanguageServerConnectionTests : IDisposable
     private LanguageServerConnection Connect() => new(
         _server,
         Entry(),
+        _dir.Path,
         TimeSpan.FromSeconds(5),
         AskAgainPolicy.Default with { MaxAttempts = 3 },
         (delay, _) =>
@@ -225,13 +226,131 @@ public sealed class LanguageServerConnectionTests : IDisposable
         Assert.Equal(1, exits);
     }
 
+    [Fact]
+    public async Task ShowingAnotherFileClosesTheOneBefore()
+    {
+        var other = Path.Combine(_dir.Path, "lib.rs");
+        File.WriteAllText(other, "pub fn lib() {}");
+        using var connection = Connect();
+
+        await Hover(connection);
+        await Hover(connection, other);
+
+        Assert.Equal(DocumentUri.OfFile(_file), Assert.Single(_server.Closed));
+    }
+
+    [Fact]
+    public async Task DiagnosticsForTheOpenFileBecomeItsState()
+    {
+        using var connection = Connect();
+        await Hover(connection);
+
+        _server.Publish(Wave(_file, Problem("cannot find value `x`")));
+
+        var open = Assert.IsType<DocumentState.Open>(connection.Document);
+        var received = Assert.IsType<DiagnosticsState.Received>(open.Diagnostics);
+        Assert.Equal("cannot find value `x`", Assert.Single(received.Diagnostics).Message);
+    }
+
+    // Waves replace: a server that re-checks a file sends the whole set again, and adding would
+    // leave every fixed error on screen for as long as the file is open.
+    [Fact]
+    public async Task ALaterWaveReplacesTheOneBeforeItRatherThanAddingToIt()
+    {
+        using var connection = Connect();
+        await Hover(connection);
+
+        _server.Publish(Wave(_file, Problem("first"), Problem("second")));
+        _server.Publish(Wave(_file, Problem("only")));
+
+        var open = Assert.IsType<DocumentState.Open>(connection.Document);
+        var received = Assert.IsType<DiagnosticsState.Received>(open.Diagnostics);
+        Assert.Equal("only", Assert.Single(received.Diagnostics).Message);
+    }
+
+    [Fact]
+    public async Task AnEmptyWaveMeansTheFileIsCleanRatherThanUnchecked()
+    {
+        using var connection = Connect();
+        await Hover(connection);
+
+        _server.Publish(Wave(_file));
+
+        var open = Assert.IsType<DocumentState.Open>(connection.Document);
+        Assert.Empty(Assert.IsType<DiagnosticsState.Received>(open.Diagnostics).Diagnostics);
+    }
+
+    [Fact]
+    public async Task DiagnosticsForAFileThatIsNotOnScreenAreDropped()
+    {
+        using var connection = Connect();
+        await Hover(connection);
+
+        _server.Publish(Wave(Path.Combine(_dir.Path, "other.rs"), Problem("elsewhere")));
+
+        var open = Assert.IsType<DocumentState.Open>(connection.Document);
+        Assert.IsType<DiagnosticsState.Waiting>(open.Diagnostics);
+    }
+
+    [Fact]
+    public async Task AFileWithNoDiagnosticsYetIsWaitingRatherThanClean()
+    {
+        using var connection = Connect();
+
+        await Hover(connection);
+
+        var open = Assert.IsType<DocumentState.Open>(connection.Document);
+        Assert.IsType<DiagnosticsState.Waiting>(open.Diagnostics);
+    }
+
+    // A truncated file is never sent, so it has no diagnostics — and that is a different screen
+    // from a file the server checked and found clean.
+    [Fact]
+    public async Task AFileTooLargeForThePreviewIsNotSentAndIsNotClean()
+    {
+        var huge = Path.Combine(_dir.Path, "huge.rs");
+        File.WriteAllBytes(huge, new byte[FileContentLoader.MaxTextBytes + 1]);
+        using var connection = Connect();
+
+        await Hover(connection, huge);
+
+        var skipped = Assert.IsType<DocumentState.NotSent>(connection.Document);
+        Assert.Equal(SkipReason.PreviewTruncated, skipped.Reason);
+    }
+
+    [Fact]
+    public async Task AFreshWaveIsAnnouncedSoThePaneCanRedraw()
+    {
+        using var connection = Connect();
+        var changes = new List<DocumentState>();
+        await Hover(connection);
+        connection.DocumentChanged += changes.Add;
+
+        _server.Publish(Wave(_file, Problem("boom")));
+
+        Assert.Single(changes);
+    }
+
+    private static PublishedDiagnostics Wave(string path, params Diagnostic[] items) =>
+        new(DocumentUri.OfFile(path), ResultVersion.Untagged, items);
+
+    private static Diagnostic Problem(string message) => new(
+        new LspRange(new LspPosition(new LspLine(0), new LspCharacter(0)),
+            new LspPosition(new LspLine(0), new LspCharacter(4))),
+        DiagnosticSeverity.Error,
+        message,
+        Source: "rustc",
+        Code: "E0425");
+
     private sealed class FakeSession : ILanguageServerSession
     {
         public readonly Queue<LspResponse<Hover>> Answers = new();
         public readonly List<DocumentUri> Opened = [];
+        public readonly List<DocumentUri> Closed = [];
 
         public event Action<ServerReadiness>? ReadinessChanged;
         public event Action<ServerExit>? Exited;
+        public event Action<PublishedDiagnostics>? DiagnosticsPublished;
 
         public string? HandshakeFailure { get; set; }
         public int Handshakes { get; private set; }
@@ -266,6 +385,14 @@ public sealed class LanguageServerConnectionTests : IDisposable
         public void End(ServerExit exit) => Exited?.Invoke(exit);
 
         public void RequestShutdown() => ShutdownRequests++;
+
+        public Task CloseAsync(DocumentUri uri, CancellationToken cancel)
+        {
+            Closed.Add(uri);
+            return Task.CompletedTask;
+        }
+
+        public void Publish(PublishedDiagnostics published) => DiagnosticsPublished?.Invoke(published);
 
         public void Kill() => WasKilled = true;
 

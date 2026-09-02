@@ -114,8 +114,15 @@ internal sealed record FileBrowserTextBody : Widget
         {
             if (preview is not FilePreview.Text text) return;
             content.SetRenderState(ToRenderState(text));
+            content.SetDiagnostics(DiffDiagnosticOverlay.Empty);
             languageServers?.FileShown(text.Path);
         });
+
+        if (languageServers is not null)
+            content.Bind(languageServers.Diagnostics, diagnostics => content.SetDiagnostics(
+                browser.Preview.Value is FilePreview.Text shown && diagnostics.IsFor(shown.Path)
+                    ? new DiffDiagnosticOverlay(diagnostics.Path, diagnostics.Items)
+                    : DiffDiagnosticOverlay.Empty));
         // After the render state, and on its own path: a fold toggle must not run the render-state
         // transition, which would reset horizontal scroll and restore a stale pixel offset.
         content.Bind(browser.Folds, content.SetFoldState);

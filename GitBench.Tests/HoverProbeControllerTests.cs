@@ -1,5 +1,6 @@
 using GitBench.Features.Diff;
 using GitBench.Features.LanguageServers;
+using GitBench.Lsp;
 using GitBench.Lsp.Documents;
 using ZGF.Geometry;
 using ZGF.Observable;
@@ -161,6 +162,43 @@ public sealed class HoverProbeControllerTests
         Assert.Empty(fx.Source.Asked);
     }
 
+    // A squiggle has to be readable, and the server that drew it may say nothing about the symbol
+    // under the pointer — or there may be no server for the language at all any more.
+    [Fact]
+    public async Task ADiagnosticOnTheLineIsShownEvenWhenTheServerSaysNothingAboutTheSymbol()
+    {
+        var fixture = new Fixture();
+        fixture.Source.Answer = null;
+        fixture.Problems[8] = [Problem("cannot find value `x`")];
+
+        fixture.Move(10, 10);
+        await fixture.SettleShown();
+
+        Assert.Contains("cannot find value `x`", fixture.Presenter.Showing?.Markdown);
+    }
+
+    [Fact]
+    public async Task TheProblemComesBeforeTheTypeOnTheSameCard()
+    {
+        var fixture = new Fixture();
+        fixture.Problems[8] = [Problem("mismatched types")];
+
+        fixture.Move(10, 10);
+        await fixture.SettleShown();
+
+        var card = fixture.Presenter.Showing!.Markdown;
+        Assert.Contains("line 8", card);
+        Assert.True(card.IndexOf("mismatched types", StringComparison.Ordinal)
+            < card.IndexOf("line 8", StringComparison.Ordinal));
+    }
+
+    private static Diagnostic Problem(string message) => new(
+        new LspRange(
+            new LspPosition(new LspLine(7), new LspCharacter(0)),
+            new LspPosition(new LspLine(7), new LspCharacter(4))),
+        DiagnosticSeverity.Error,
+        message);
+
     private sealed class Fixture
     {
         public Fixture()
@@ -172,6 +210,8 @@ public sealed class HoverProbeControllerTests
         }
 
         public Dictionary<(float X, float Y), int> Positions { get; } = new();
+
+        public Dictionary<int, IReadOnlyList<Diagnostic>> Problems { get; } = new();
 
         public FakeSource Source { get; } = new();
 
@@ -188,6 +228,17 @@ public sealed class HoverProbeControllerTests
         /// only yields a fixed number of times races it — the fakes answer instantly, so this waits
         /// for the observable effect rather than for a duration.
         /// </summary>
+        /// <summary>Waits for the card itself, not for the question: a test that asserts on what is
+        /// on screen and waits for the asking passes or fails on how busy the machine is.</summary>
+        public async Task SettleShown()
+        {
+            for (var i = 0; i < 500 && Presenter.Showing is null; i++)
+            {
+                await Task.Yield();
+                await Task.Delay(1);
+            }
+        }
+
         public async Task Settle(int expectedAsks = 0)
         {
             // Nothing is expected to happen: yielding is enough to let it not happen, and waiting
@@ -212,6 +263,9 @@ public sealed class HoverProbeControllerTests
             fixture.Positions.TryGetValue((point.X, point.Y), out var line)
                 ? new FilePositionHit(new FileLine(line), new RawColumn(0))
                 : null;
+
+        public IReadOnlyList<Diagnostic> DiagnosticsOn(FileLine line) =>
+            fixture.Problems.TryGetValue(line.Value, out var items) ? items : [];
     }
 
     private sealed class FakeSource : IHoverSource

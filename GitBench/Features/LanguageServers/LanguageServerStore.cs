@@ -23,6 +23,8 @@ internal interface ILanguageServerStore : IHoverSource
 {
     IReadable<LanguageServerSnapshot> Active { get; }
 
+    IReadable<FileDiagnostics> Diagnostics { get; }
+
     string ConfigPath { get; }
 
     void FileShown(string absolutePath);
@@ -49,6 +51,7 @@ internal sealed class LanguageServerStore : ILanguageServerStore, IHostedService
     private readonly IUiDispatcher _dispatcher;
     private readonly LanguageServerSupervisor _supervisor;
     private readonly State<LanguageServerSnapshot> _active = new(LanguageServerSnapshot.Nothing);
+    private readonly State<FileDiagnostics> _diagnostics = new(FileDiagnostics.None);
     private readonly Dictionary<Guid, IReadOnlyList<StarterServer>> _suggestions = [];
     private readonly CancellationTokenSource _stopping = new();
 
@@ -60,6 +63,8 @@ internal sealed class LanguageServerStore : ILanguageServerStore, IHostedService
     private bool _started;
     private bool _pumping;
     private bool _disposed;
+    private LanguageServerConnection? _watched;
+    private string _watchedPath = string.Empty;
 
     public LanguageServerStore(
         IRepoRegistry registry,
@@ -85,6 +90,8 @@ internal sealed class LanguageServerStore : ILanguageServerStore, IHostedService
     }
 
     public IReadable<LanguageServerSnapshot> Active => _active;
+
+    public IReadable<FileDiagnostics> Diagnostics => _diagnostics;
 
     public string ConfigPath { get; }
 
@@ -158,6 +165,8 @@ internal sealed class LanguageServerStore : ILanguageServerStore, IHostedService
     {
         if (_disposed) return;
         _disposed = true;
+        if (_watched is not null) _watched.DocumentChanged -= OnDocumentChanged;
+        _watched = null;
         _stopping.Cancel();
         _activeSub?.Dispose();
         _reposSub?.Dispose();
@@ -211,8 +220,33 @@ internal sealed class LanguageServerStore : ILanguageServerStore, IHostedService
             _registry.Active.Value is { } active &&
             _supervisor.ProcessFor(new RepositoryId(active.Id), entry.Language) is LanguageServerConnection connection)
         {
+            Watch(connection, absolutePath);
             _ = connection.PrepareAsync(absolutePath, CancellationToken.None);
         }
+        else
+        {
+            Watch(null, absolutePath);
+        }
+    }
+
+    private void Watch(LanguageServerConnection? connection, string absolutePath)
+    {
+        if (ReferenceEquals(_watched, connection) && _watchedPath == absolutePath) return;
+
+        if (_watched is not null) _watched.DocumentChanged -= OnDocumentChanged;
+        _watched = connection;
+        _watchedPath = absolutePath;
+        if (_watched is not null) _watched.DocumentChanged += OnDocumentChanged;
+
+        _diagnostics.Value = connection is null
+            ? FileDiagnostics.None
+            : new FileDiagnostics(absolutePath, connection.Document);
+    }
+
+    private void OnDocumentChanged(DocumentState state)
+    {
+        if (_disposed || _watched is null) return;
+        _diagnostics.Value = new FileDiagnostics(_watchedPath, state);
     }
 
     private void OnActiveChanged()
@@ -375,7 +409,8 @@ internal sealed class LanguageServerLauncher(ILanguageServerLauncher processes, 
     {
         var launched = processes.Launch(request);
         return launched is LaunchResult.Started { Process: ILanguageServerSession session }
-            ? new LaunchResult.Started(new LanguageServerConnection(session, request.Entry, handshakeTimeout))
+            ? new LaunchResult.Started(
+                new LanguageServerConnection(session, request.Entry, request.ProjectRoot, handshakeTimeout))
             : launched;
     }
 }

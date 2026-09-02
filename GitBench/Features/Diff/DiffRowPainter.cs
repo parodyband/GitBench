@@ -1,6 +1,7 @@
 using GitBench.Controls;
 using GitBench.Git;
 using GitBench.Localization;
+using GitBench.Lsp;
 using GitBench.Theming;
 using GitBench.Widgets;
 using ZGF.Fonts;
@@ -26,7 +27,8 @@ internal readonly record struct DiffRowPaint(
     int Z,
     DiffRowSelection? Selection = null,
     bool FoldColumn = false,
-    bool FoldHovered = false);
+    bool FoldHovered = false,
+    IReadOnlyList<DiagnosticMark>? Diagnostics = null);
 
 /// <summary>
 /// Paints individual <see cref="DiffRow"/>s — banners, hunk separators, tears, and code lines
@@ -366,6 +368,9 @@ internal sealed class DiffRowPainter
             DrawSelection(c, l.Text.Expanded, selection, textLeft, p.Bottom, p.Z + 1);
         DrawLineText(c, l, textLeft, p.Bottom, p.Left + p.Width, p.Z + 2);
 
+        if (p.Diagnostics is { Count: > 0 } marks)
+            DrawDiagnosticUnderlines(c, l, marks, textLeft, p.Bottom, p.Viewport, p.Z + 3);
+
         // After the text and outside it: the chip is chrome standing in for the body, not part of
         // the row's characters, so nothing selects it and nothing measures a caret against it.
         if (l.Fold is { Chip: true })
@@ -474,9 +479,100 @@ internal sealed class DiffRowPainter
             });
         }
 
-        DrawMonoText(c, glyph, x, p.Bottom, GlyphColumnWidth, glyphColor, TextAlignment.Center, p.Z + 2);
+        if (p.Diagnostics is { Count: > 0 } marks && l.Kind == DiffLineKind.Context)
+            DrawDiagnosticDot(c, WorstOf(marks), x, p.Bottom, p.Z + 2);
+        else
+            DrawMonoText(c, glyph, x, p.Bottom, GlyphColumnWidth, glyphColor, TextAlignment.Center, p.Z + 2);
+
         return LineTextOriginX(p.Left, p.GutterWidth, p.SingleGutter, p.FoldColumn);
     }
+
+    private const float DiagnosticDotSize = 6f;
+    private const float DiagnosticWaveHalfPeriod = 3f;
+    private const float DiagnosticWaveAmplitude = 1.5f;
+    private const float DiagnosticWaveThickness = 1.25f;
+    private const float DiagnosticBaselineInset = 2f;
+
+    private void DrawDiagnosticDot(ICanvas c, DiagnosticSeverity severity, float x, float bottom, int z) =>
+        c.DrawRect(new DrawRectInputs
+        {
+            Position = new RectF(
+                x + (GlyphColumnWidth - DiagnosticDotSize) / 2f,
+                bottom + (LineHeight - DiagnosticDotSize) / 2f,
+                DiagnosticDotSize,
+                DiagnosticDotSize),
+            Style = new RectStyle
+            {
+                BackgroundColor = DiagnosticColor(severity),
+                BorderRadius = BorderRadiusStyle.All(DiagnosticDotSize / 2f),
+            },
+            ZIndex = z,
+        });
+
+    private void DrawDiagnosticUnderlines(
+        ICanvas c,
+        DiffRow.Line l,
+        IReadOnlyList<DiagnosticMark> marks,
+        float textLeft,
+        float bottom,
+        RectF viewport,
+        int z)
+    {
+        var text = l.Text.Expanded;
+        var y = bottom + DiagnosticBaselineInset;
+        foreach (var mark in marks)
+        {
+            var startCell = DiffText.CellsBefore(text, mark.Range.Start);
+            var endCell = DiffText.CellsBefore(text, mark.Range.Start + mark.Range.Length);
+            var from = textLeft + startCell * MonoAdvance;
+            var to = textLeft + Math.Max(endCell, startCell + 1) * MonoAdvance;
+            DrawWave(c, from, to, y, viewport, DiagnosticColor(mark.Severity), z);
+        }
+    }
+
+    private static void DrawWave(
+        ICanvas c, float from, float to, float y, RectF viewport, uint color, int z)
+    {
+        var visibleFrom = Math.Max(from, viewport.Left - DiagnosticWaveHalfPeriod);
+        var visibleTo = Math.Min(to, viewport.Right + DiagnosticWaveHalfPeriod);
+        if (visibleTo <= visibleFrom) return;
+
+        var first = Math.Max(0, (int)((visibleFrom - from) / DiagnosticWaveHalfPeriod));
+        var last = Math.Min(
+            (int)Math.Ceiling((to - from) / DiagnosticWaveHalfPeriod),
+            (int)((visibleTo - from) / DiagnosticWaveHalfPeriod) + 1);
+
+        for (var k = first; k < last; k++)
+        {
+            var startX = from + k * DiagnosticWaveHalfPeriod;
+            var endX = Math.Min(to, startX + DiagnosticWaveHalfPeriod);
+            if (endX <= startX) break;
+            var down = (k & 1) == 0;
+            c.DrawLine(new DrawLineInputs
+            {
+                Start = new PointF(startX, y + (down ? DiagnosticWaveAmplitude : -DiagnosticWaveAmplitude)),
+                End = new PointF(endX, y + (down ? -DiagnosticWaveAmplitude : DiagnosticWaveAmplitude)),
+                Thickness = DiagnosticWaveThickness,
+                Color = color,
+                ZIndex = z,
+            });
+        }
+    }
+
+    private static DiagnosticSeverity WorstOf(IReadOnlyList<DiagnosticMark> marks)
+    {
+        var worst = marks[0].Severity;
+        foreach (var mark in marks)
+            if (mark.Severity < worst) worst = mark.Severity;
+        return worst;
+    }
+
+    private uint DiagnosticColor(DiagnosticSeverity severity) => severity switch
+    {
+        DiagnosticSeverity.Warning => Styles.DiagnosticWarning,
+        DiagnosticSeverity.Information or DiagnosticSeverity.Hint => Styles.DiagnosticInfo,
+        _ => Styles.DiagnosticError,
+    };
 
     // Dim until pointed at, like the gap expanders: a chevron beside every declaration with a body
     // is a lot of chrome to keep at full contrast on a file the reader is only reading.

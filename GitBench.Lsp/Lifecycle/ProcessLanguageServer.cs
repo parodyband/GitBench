@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using GitBench.Lsp.Documents;
 
 namespace GitBench.Lsp.Lifecycle;
 
@@ -91,6 +92,8 @@ public sealed class ProcessLanguageServer : ILanguageServerSession, ILspServerMe
     public event Action<ServerReadiness>? ReadinessChanged;
 
     public event Action<ServerExit>? Exited;
+
+    public event Action<PublishedDiagnostics>? DiagnosticsPublished;
 
     public ServerLaunchRequest Request { get; }
 
@@ -209,6 +212,16 @@ public sealed class ProcessLanguageServer : ILanguageServerSession, ILspServerMe
 
     void ILspServerMessages.OnNotification(ServerNotification notification)
     {
+        if (notification is ServerNotification.Diagnostics diagnostics)
+        {
+            var published = new PublishedDiagnostics(
+                diagnostics.Uri,
+                diagnostics.Version is { } version ? ResultVersion.At(version) : ResultVersion.Untagged,
+                diagnostics.Items);
+            Raise(() => DiagnosticsPublished?.Invoke(published));
+            return;
+        }
+
         if (notification is not ServerNotification.Other(var method, var payload)) return;
         if (method != LspMethod.Progress) return;
         if (ReadPercent(payload) is { } percent) Advance(new ServerReadiness.Indexing(percent));

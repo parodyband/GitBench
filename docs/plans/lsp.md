@@ -165,9 +165,12 @@ The same risk appears again at the parse layer and does not look like a position
 result carries both the declaration's whole range and the range of just its name. Taking the wrong one
 lands in the right file at the wrong line.
 
-**Nobody yet owns diagnostics-per-row.** Diagnostics arrive as ranges in file coordinates; the painter
-iterates rows and asks what is on the row in front of it. Something has to compose the two, and it is
-where a stale document meets fresh results. It needs a name and a home before phase 3.
+**Nobody owned diagnostics-per-row.** Diagnostics arrive as ranges in file coordinates; the painter
+iterates rows and asks what is on the row in front of it. That composer is now
+`DiffDiagnosticOverlay`, built per wave and read per row at draw time. Two of its rules are only
+visible when they are wrong and were mutation-checked into the suite: a range that ends at character
+zero of a line belongs to the newline before it and must not mark that line, and a range with no
+width at all — "expected a semicolon here" — draws nothing unless it is widened to a cell.
 
 **A result can be retryable, and that is a type decision made now.** While indexing, a server rejects
 requests with a code meaning "ask again", not "failed". Whether that is a case of the response type or
@@ -179,7 +182,9 @@ render as an error.
 **Coming back to a file starts from nothing.** Diagnostics belong to an open document, so re-selecting
 a file looked at ten seconds ago shows a spinner again for as long as the server takes. The app already
 solves this for commit details with stale-while-revalidate; the same applies here — show the last known
-results dimmed while fresh ones are pending.
+results dimmed while fresh ones are pending. Still outstanding: the distinction is modelled
+(`FileDiagnostics.Answered` separates "not heard back" from "checked and clean") but nothing shows it
+yet, so a file being re-checked looks exactly like a file with nothing wrong with it.
 
 **A repository reached through a symlink disowns its own files.** Deciding whether a definition target
 is inside the repo is a path comparison, and it also has to see through symlinks and be explicit about
@@ -250,10 +255,23 @@ Each phase produces something visible. Nothing is built two layers deep before a
    Status is visible in two places: a chip in the Files pane, and a settings dialog that lists each
    configured server with its state, stops and restarts one, reports config problems with their
    reason, suggests servers for languages present in the repository, and writes or copies a starter
-   entry. 56 tests cover the app-side half.
-3. **Diagnostics.** Next. The overlay, the retry handling, wave replacement, underlines and gutter
-   marks. The protocol half is parsed and tested; nothing yet composes diagnostics per row, and that
-   owner still needs a name and a home.
+   entry.
+3. **Diagnostics — done.** The push had to be plumbed first: the protocol parsed
+   `publishDiagnostics` and then dropped it, so nothing above the protocol layer had ever seen one.
+   `ILanguageServerQuestions` now carries the wave and the matching close, and
+   `LanguageServerConnection` was moved onto `PreviewSession` rather than keeping its own document
+   bookkeeping — which is where wave replacement, per-file versioning, closing the previous file and
+   discarding a late answer already lived, tested. `LanguageServerStore` publishes what the servers
+   say about the file on screen; `FileDiagnostics` checks the path and the open document against each
+   other, because a file goes on screen before the server is told about it and the moment in between
+   would otherwise show one file's errors under another's name. `DiffDiagnosticOverlay` is the
+   per-row owner the plan said still needed one: it clips a range to each line it crosses, converts
+   the server's characters to drawn columns, and widens a zero-width range so a server pointing
+   between two characters still marks something. `DiffRowPainter` draws the wave and a severity dot
+   in the glyph column, read at draw time from a layer the row set knows nothing about, so a wave
+   arriving three seconds later costs a repaint rather than a re-flatten. A squiggle is readable:
+   `HoverCardText` puts the problems above the type on the same card. 93 tests now cover the
+   app-side half of phases 1 to 3.
 4. **Go to definition.** Detached previews, tree expansion, the back stack.
 
 Deferred: references panel, project-wide symbol search, semantic highlighting.
@@ -336,6 +354,12 @@ actually travels. Before that existed, no hover feature could be verified except
 to hold their cursor still.
 
 **Process cleanup** gets one test per platform that kills the client and checks nothing survives.
+
+**A repository that does not compile.** `1d-lsp-diagnostics` in the test-repo generator is a Rust
+crate and a C file that each fail to build in the same four ways: an unknown name, a type mismatch, a
+tab-indented line with an error on it, and a call whose arguments span several rows. Two languages
+because the shapes matter more than the language — clangd needs no toolchain component installed and
+answers in under a second, so the overlay can be looked at without waiting out an index first.
 
 ## Risks
 

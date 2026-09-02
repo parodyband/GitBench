@@ -1,4 +1,5 @@
 using GitBench.Features.Diff;
+using GitBench.Lsp;
 using ZGF.Geometry;
 using ZGF.Gui;
 using ZGF.Gui.Desktop.Controllers;
@@ -62,12 +63,19 @@ internal sealed class HoverProbeController : KeyboardMouseController, IDisposabl
         _popups.Hide(this);
 
         if (_document() is not { } document) return;
-        if (!_servers.Handles(document.Path)) return;
 
-        Ask(document.Root, document.Path, at.Value, point);
+        var problems = _surface.DiagnosticsOn(at.Value.Line);
+        if (problems.Count == 0 && !_servers.Handles(document.Path)) return;
+
+        Ask(document.Root, document.Path, at.Value, point, problems);
     }
 
-    private void Ask(string repoRoot, string path, FilePositionHit at, PointF anchor)
+    private void Ask(
+        string repoRoot,
+        string path,
+        FilePositionHit at,
+        PointF anchor,
+        IReadOnlyList<Diagnostic> problems)
     {
         var cancel = new CancellationTokenSource();
         _pending = cancel;
@@ -79,9 +87,10 @@ internal sealed class HoverProbeController : KeyboardMouseController, IDisposabl
             try
             {
                 await _dwell(TimeSpan.FromMilliseconds(DwellMs), token).ConfigureAwait(false);
-                var hover = await _servers
-                    .HoverAsync(repoRoot, path, at.Line, at.Column, token)
-                    .ConfigureAwait(false);
+                var answer = _servers.Handles(path)
+                    ? await _servers.HoverAsync(repoRoot, path, at.Line, at.Column, token).ConfigureAwait(false)
+                    : null;
+                var hover = HoverCardText.Compose(problems, answer);
                 if (hover is null || token.IsCancellationRequested) return;
 
                 _dispatcher.Post(() =>

@@ -7,13 +7,13 @@ using GitBench.Lsp.Lifecycle;
 
 namespace GitBench.Features.LanguageServers;
 
-internal sealed class LanguageServerConnection : ILanguageServerProcess
+internal sealed class LanguageServerConnection : ILanguageServerProcess, ILanguageClient
 {
     private readonly ILanguageServerSession _server;
     private readonly LanguageServerEntry _entry;
     private readonly AskAgainPolicy _retry;
     private readonly Func<TimeSpan, CancellationToken, Task> _wait;
-    private readonly HashSet<string> _open = new(StringComparer.Ordinal);
+    private readonly PreviewSession _session;
     private readonly CancellationTokenSource _closing = new();
     private readonly Task<string?> _handshake;
     private readonly object _gate = new();
@@ -25,6 +25,7 @@ internal sealed class LanguageServerConnection : ILanguageServerProcess
     public LanguageServerConnection(
         ILanguageServerSession server,
         LanguageServerEntry entry,
+        string projectRoot,
         TimeSpan handshakeTimeout,
         AskAgainPolicy? retry = null,
         Func<TimeSpan, CancellationToken, Task>? wait = null)
@@ -36,8 +37,17 @@ internal sealed class LanguageServerConnection : ILanguageServerProcess
 
         server.ReadinessChanged += OnReadinessChanged;
         server.Exited += OnExited;
+        server.DiagnosticsPublished += OnDiagnosticsPublished;
+        _session = new PreviewSession(this, RepoBoundary.At(projectRoot));
+        _session.StateChanged += state => DocumentChanged?.Invoke(state);
         _handshake = HandshakeAsync(handshakeTimeout);
     }
+
+    public event Action<DocumentState>? DocumentChanged;
+
+    public event Action<PublishedDiagnostics>? DiagnosticsPublished;
+
+    public DocumentState Document => _session.State;
 
     public event Action<ServerReadiness>? ReadinessChanged;
 
@@ -64,30 +74,71 @@ internal sealed class LanguageServerConnection : ILanguageServerProcess
         string absolutePath, FileLine line, RawColumn column, CancellationToken cancel)
     {
         if (await Handshaked().ConfigureAwait(false) is not null) return null;
-
-        var uri = DocumentUri.OfFile(absolutePath);
-        if (!await EnsureOpenAsync(uri, absolutePath, cancel).ConfigureAwait(false)) return null;
+        if (!await EnsurePreviewedAsync(absolutePath, cancel).ConfigureAwait(false)) return null;
 
         var at = new LspPosition(LspLine.FromOneBased(line.Value), new LspCharacter(column.Value));
-        var response = await AskAgain
-            .AskAsync(
-                token => _server.AskAsync(LspRequests.Hover(uri, at), _entry.RequestTimeout, token),
-                _retry,
-                _wait,
-                cancel)
-            .ConfigureAwait(false);
-
-        return response is LspResponse<Hover>.Ok(var hover) ? HoverText.Of(hover) : null;
+        var answer = await _session.HoverAsync(at).ConfigureAwait(false);
+        return answer is HoverAnswer.Content content ? content.Text : null;
     }
 
     public async Task PrepareAsync(string absolutePath, CancellationToken cancel)
     {
         if (await Handshaked().ConfigureAwait(false) is not null) return;
-
-        var uri = DocumentUri.OfFile(absolutePath);
-        if (!await EnsureOpenAsync(uri, absolutePath, cancel).ConfigureAwait(false)) return;
-        Probe(uri);
+        if (!await EnsurePreviewedAsync(absolutePath, cancel).ConfigureAwait(false)) return;
+        Probe(DocumentUri.OfFile(absolutePath));
     }
+
+    public void StopPreview() => _session.Clear();
+
+    bool ILanguageClient.Handles(LanguageId language) => _entry.Language.Equals(language);
+
+    void ILanguageClient.OpenDocument(
+        DocumentUri uri, LanguageId language, DocumentVersion version, string text) =>
+        _ = _server.OpenAsync(uri, language, version, text, _closing.Token);
+
+    void ILanguageClient.CloseDocument(DocumentUri uri) => _ = _server.CloseAsync(uri, _closing.Token);
+
+    async Task<HoverReply> ILanguageClient.HoverAsync(
+        DocumentUri uri, LspPosition position, CancellationToken cancel)
+    {
+        var response = await AskAgain
+            .AskAsync(
+                token => _server.AskAsync(LspRequests.Hover(uri, position), _entry.RequestTimeout, token),
+                _retry,
+                _wait,
+                cancel)
+            .ConfigureAwait(false);
+
+        return response is LspResponse<Hover>.Ok(var hover) ? ToReply(hover) : Nothing;
+    }
+
+    async Task<DefinitionPayload> ILanguageClient.DefinitionAsync(
+        DocumentUri uri, LspPosition position, CancellationToken cancel)
+    {
+        var response = await AskAgain
+            .AskAsync(
+                token => _server.AskAsync(LspRequests.Definition(uri, position), _entry.RequestTimeout, token),
+                _retry,
+                _wait,
+                cancel)
+            .ConfigureAwait(false);
+
+        return response is LspResponse<Definition>.Ok(Definition.Targets targets)
+            ? new DefinitionPayload.Links(targets.Items
+                .Select(item => new LocationLink(item.Uri, item.EnclosingRange, OptionalRange.Of(item.Range)))
+                .ToArray())
+            : DefinitionPayload.Nothing;
+    }
+
+    private static readonly HoverReply Nothing = new(HoverPayload.Nothing, OptionalRange.Absent);
+
+    private static HoverReply ToReply(Hover hover) => hover switch
+    {
+        Hover.Text(var kind, var value, var range) => new HoverReply(
+            new HoverPayload.Markup(kind, value),
+            range is { } present ? OptionalRange.Of(present) : OptionalRange.Absent),
+        _ => Nothing,
+    };
 
     public void RequestShutdown() => _server.RequestShutdown();
 
@@ -98,8 +149,11 @@ internal sealed class LanguageServerConnection : ILanguageServerProcess
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _server.ReadinessChanged -= OnReadinessChanged;
         _server.Exited -= OnExited;
+        _server.DiagnosticsPublished -= OnDiagnosticsPublished;
         lock (_gate) _exited = null;
+        DocumentChanged = null;
         _closing.Cancel();
+        _session.Dispose();
         _server.Dispose();
         _closing.Dispose();
     }
@@ -129,15 +183,21 @@ internal sealed class LanguageServerConnection : ILanguageServerProcess
         return failure;
     }
 
-    private async Task<bool> EnsureOpenAsync(DocumentUri uri, string absolutePath, CancellationToken cancel)
+    private async Task<bool> EnsurePreviewedAsync(string absolutePath, CancellationToken cancel)
     {
-        if (_open.Contains(uri.Value)) return true;
+        var uri = DocumentUri.OfFile(absolutePath);
+        if (_session.State is DocumentState.Open open && open.Uri == uri) return true;
 
         string text;
         try
         {
             var info = new FileInfo(absolutePath);
-            if (!info.Exists || info.Length > FileContentLoader.MaxTextBytes) return false;
+            if (!info.Exists) return false;
+            if (info.Length > FileContentLoader.MaxTextBytes)
+            {
+                _session.Preview(new PreviewFile(uri, _entry.Language, PreviewContent.Truncated));
+                return false;
+            }
             text = await File.ReadAllTextAsync(absolutePath, cancel).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -145,12 +205,12 @@ internal sealed class LanguageServerConnection : ILanguageServerProcess
             return false;
         }
 
-        await _server
-            .OpenAsync(uri, _entry.Language, new DocumentVersion(1), text, cancel)
-            .ConfigureAwait(false);
-        _open.Add(uri.Value);
-        return true;
+        _session.Preview(new PreviewFile(uri, _entry.Language, PreviewContent.Whole(text)));
+        return _session.State is DocumentState.Open;
     }
+
+    private void OnDiagnosticsPublished(PublishedDiagnostics published) =>
+        DiagnosticsPublished?.Invoke(published);
 
     private void Probe(DocumentUri uri)
     {

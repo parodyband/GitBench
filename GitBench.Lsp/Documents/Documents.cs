@@ -173,6 +173,10 @@ public sealed class PreviewSession : IDisposable
 
     public DocumentState State => _state;
 
+    /// <summary>Raised whenever what the pane is holding changes: a new file, a file dropped, or a
+    /// fresh wave of diagnostics for the file already open.</summary>
+    public event Action<DocumentState>? StateChanged;
+
     /// <summary>Shows a file. Also the way a file that changed on disk is handled: same call, new
     /// content, so the watcher and the selection take one path rather than two.</summary>
     public void Preview(PreviewFile file)
@@ -187,13 +191,13 @@ public sealed class PreviewSession : IDisposable
 
         if (!_client.Handles(file.Language))
         {
-            _state = new DocumentState.NotSent(SkipReason.NoServerForLanguage);
+            Publish(new DocumentState.NotSent(SkipReason.NoServerForLanguage));
             return;
         }
 
         if (file.Content is not PreviewContent.Complete complete)
         {
-            _state = new DocumentState.NotSent(SkipReason.PreviewTruncated);
+            Publish(new DocumentState.NotSent(SkipReason.PreviewTruncated));
             return;
         }
 
@@ -202,14 +206,14 @@ public sealed class PreviewSession : IDisposable
         _openText = complete.Text;
         _requests = new CancellationTokenSource();
         _client.OpenDocument(file.Uri, file.Language, version, complete.Text);
-        _state = new DocumentState.Open(file.Uri, version, DiagnosticsState.Pending);
+        Publish(new DocumentState.Open(file.Uri, version, DiagnosticsState.Pending));
     }
 
     /// <summary>The selection moved to something that is not a file.</summary>
     public void Clear()
     {
         CloseOpenDocument();
-        _state = DocumentState.Idle;
+        Publish(DocumentState.Idle);
     }
 
     public async Task<HoverAnswer> HoverAsync(LspPosition position)
@@ -256,6 +260,7 @@ public sealed class PreviewSession : IDisposable
         _client.DiagnosticsPublished -= OnDiagnosticsPublished;
         CloseOpenDocument();
         _state = DocumentState.Idle;
+        StateChanged = null;
     }
 
     private bool StillShowing(DocumentUri uri, DocumentVersion version) =>
@@ -267,7 +272,13 @@ public sealed class PreviewSession : IDisposable
         if (published.Uri != open.Uri) return;
         if (published.Version is ResultVersion.Tagged tagged && tagged.Version.Value < open.Version.Value) return;
 
-        _state = open with { Diagnostics = new DiagnosticsState.Received(published.Diagnostics.ToArray()) };
+        Publish(open with { Diagnostics = new DiagnosticsState.Received(published.Diagnostics.ToArray()) });
+    }
+
+    private void Publish(DocumentState state)
+    {
+        _state = state;
+        StateChanged?.Invoke(state);
     }
 
     private void CloseOpenDocument()
